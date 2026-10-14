@@ -5,6 +5,23 @@
 #include <map>
 #include <vector>
 namespace gz {
+struct MeshUpdateRange {
+    std::size_t offset=0,bytes=0;
+};
+struct MeshUploadPlan {
+    MeshUpdateRange vertices,indices;
+    std::size_t bytes()const{return vertices.bytes+indices.bytes;}
+};
+// Only advance this tracker after the corresponding copy has been recorded.
+class MeshUploadTracker {
+public:
+    MeshUploadPlan plan(const GeometryView& mesh,bool newVertices=false,bool newIndices=false)const;
+    void commit(const GeometryView& mesh){previous_=mesh;valid_=true;}
+    void reset(){previous_={};valid_=false;}
+private:
+    GeometryView previous_{};
+    bool valid_=false;
+};
 // Backend-agnostic immutable mesh staging. No device allocation occurs here:
 // Vulkan can later turn a changed revision into persistent VkBuffers, while
 // the DirectX compatibility slot can consume exactly the same data.

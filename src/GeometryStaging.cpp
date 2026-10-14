@@ -2,6 +2,20 @@
 #include <cstring>
 #include <limits>
 namespace gz {
+MeshUploadPlan MeshUploadTracker::plan(const GeometryView& mesh,bool newVertices,bool newIndices)const {
+    const bool full=!valid_ || !mesh.resourceId || !mesh.staticRevision || !mesh.dynamicRevision ||
+        mesh.resourceId!=previous_.resourceId || mesh.staticRevision!=previous_.staticRevision ||
+        mesh.staticVertexBytes!=previous_.staticVertexBytes || mesh.staticIndexCount!=previous_.staticIndexCount ||
+        mesh.strideBytes!=previous_.strideBytes;
+    const bool dynamic=full || mesh.dynamicRevision!=previous_.dynamicRevision ||
+        mesh.vertexBytes!=previous_.vertexBytes || mesh.indexCount!=previous_.indexCount;
+    MeshUploadPlan result;
+    if(full || newVertices)result.vertices={0,mesh.vertexBytes};
+    else if(dynamic)result.vertices={mesh.staticVertexBytes,mesh.vertexBytes-mesh.staticVertexBytes};
+    if(full || newIndices)result.indices={0,mesh.indexCount*sizeof(std::uint32_t)};
+    else if(dynamic)result.indices={mesh.staticIndexCount*sizeof(std::uint32_t),(mesh.indexCount-mesh.staticIndexCount)*sizeof(std::uint32_t)};
+    return result;
+}
 GeometryStagingCache::Result GeometryStagingCache::stage(std::uint64_t id,const GeometryView& src){
     // Keep hostile/corrupted geometry from indexing outside GPU vertex buffers.
     if(!src.valid()||src.vertexBytes>128u*1024u*1024u||

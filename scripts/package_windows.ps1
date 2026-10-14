@@ -16,6 +16,10 @@ $assetsDst = Join-Path $dest 'assets'
 if (-not (Test-Path $assetsSrc)) { throw "Missing assets/ directory: $assetsSrc" }
 New-Item -ItemType Directory -Path $assetsDst -Force | Out-Null
 Copy-Item (Join-Path $assetsSrc '*') -Destination $assetsDst -Recurse -Force
+$shaderBuild = Join-Path $root (Join-Path $BuildDir 'assets/shaders/vulkan')
+if (Test-Path $shaderBuild) {
+    Copy-Item (Join-Path $shaderBuild '*.spv') -Destination (Join-Path $assetsDst 'shaders/vulkan') -Force
+}
 "Build mode: $Mode`nNative Vulkan 3D is not proven by compilation alone. Check graphics_backend.log after running." |
     Set-Content -Path (Join-Path $dest 'GPU_STATUS.txt') -Encoding UTF8
 '@echo off' + "`r`n" + 'cd /d "%~dp0"' + "`r`n" + '"%~dp0GRAY_ZONE_1989.exe" %*' + "`r`n" |

@@ -10,7 +10,8 @@ inline GeometryView makeGeometryView(const SceneMesh& mesh) {
     // geometry in the first native GPU implementation.
     const std::size_t count=mesh.shadowFirstIndex ? mesh.shadowFirstIndex : mesh.indices.size();
     return {mesh.vertices.data(),mesh.vertices.size()*sizeof(SceneVertex),sizeof(SceneVertex),
-            mesh.indices.data(),count};
+            mesh.indices.data(),count,mesh.staticVertexBytes,mesh.staticIndexCount,
+            mesh.resourceId,mesh.staticRevision,mesh.dynamicRevision};
 }
 inline GpuSceneCamera makeGpuSceneCamera(const Camera& c,float centerHeight,AtmosphereSettings atmosphere){
     GpuSceneCamera out{};

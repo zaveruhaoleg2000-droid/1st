@@ -1,6 +1,8 @@
 #include "gz/SceneMesh.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <cstring>
 #include <cmath>
 #include <cstdint>
 namespace gz {
@@ -56,7 +58,62 @@ void SceneMeshBuilder::addTree(SceneMesh& m,float x,float y,float z,float scale,
     }
     ++m.treeCount;
 }
+SceneMeshBuilder::SceneMeshBuilder(){
+    static std::atomic<std::uint64_t> nextResource{1};
+    resourceId_=nextResource.fetch_add(1,std::memory_order_relaxed);
+}
 void SceneMeshBuilder::build(SceneMesh& m,TerrainWorld& world,const Simulation& sim,const Camera& camera,int selectedSquad,AtmosphereSettings atmosphere){
+    const bool near=camera.distance<160.f;
+    const float extent=near?260.f:std::clamp(camera.distance*1.05f,780.f,1900.f);
+    const float previousExtent=cachedCamera_.distance<160.f?260.f:std::clamp(cachedCamera_.distance*1.05f,780.f,1900.f);
+    const bool changed=!cacheValid_ || cachedTerrain_!=&world || cachedTerrainRevision_!=world.contentRevision() ||
+        cachedCamera_.focusX!=camera.focusX || cachedCamera_.focusZ!=camera.focusZ ||
+        (cachedCamera_.distance<160.f)!=near || previousExtent!=extent ||
+        cachedAtmosphere_.time!=atmosphere.time || cachedAtmosphere_.weather!=atmosphere.weather || cachedAtmosphere_.shadows!=atmosphere.shadows;
+    if(changed){
+        buildStatic(staticCache_,world,camera,atmosphere);
+        cachedTerrain_=&world;cachedTerrainRevision_=world.contentRevision();cachedCamera_=camera;cachedAtmosphere_=atmosphere;
+        cacheValid_=true;++staticRevision_;
+    }
+    const auto staticVertices=staticCache_.vertices.size();
+    const auto staticIndices=staticCache_.shadowFirstIndex;
+    units_.clear();
+    // Tactical markers share the GPU geometry path and simulation positions.
+    if(near){
+        for(std::size_t i=0;i<sim.soldierCount();++i){
+            const auto& s=sim.soldier(i);
+            if(s.health<=0 ||std::abs(s.x-camera.focusX)>160||std::abs(s.z-camera.focusZ)>160)continue;
+            float x=float(s.x),z=float(s.z),y=world.heightAt(x,z);
+            box(units_,{x,y+.95f,z},.65f,1.4f,.55f,sim.squad(s.squad).side==Side::Player?TextureMaterial::Concrete:TextureMaterial::Brick);
+        }
+    }else{
+        for(std::size_t i=0;i<sim.squadCount();++i){
+            const auto& q=sim.squad(i);float x=0,z=0;int alive=0;
+            for(std::size_t j=q.memberStart;j<q.memberStart+q.memberCount;++j){const auto& s=sim.soldier(j);if(s.health>0){x+=float(s.x);z+=float(s.z);++alive;}}
+            if(!alive)continue;
+            x/=alive;z/=alive;
+            if(std::abs(x-camera.focusX)>extent||std::abs(z-camera.focusZ)>extent)continue;
+            float y=world.heightAt(x,z);
+            box(units_,{x,y+16.f,z},i==std::size_t(selectedSquad)?19.f:25.f,25.f,25.f,q.side==Side::Player?TextureMaterial::Concrete:TextureMaterial::Brick);
+        }
+    }
+
+    for(auto& index:units_.indices)index+=std::uint32_t(staticVertices);
+    const bool same=m.resourceId==resourceId_ && m.staticRevision==staticRevision_ &&
+        m.vertices.size()==staticVertices+units_.vertices.size() && m.shadowFirstIndex==staticIndices+units_.indices.size() &&
+        (units_.vertices.empty() || std::memcmp(m.vertices.data()+staticVertices,units_.vertices.data(),units_.vertices.size()*sizeof(SceneVertex))==0) &&
+        (units_.indices.empty() || std::memcmp(m.indices.data()+staticIndices,units_.indices.data(),units_.indices.size()*sizeof(std::uint32_t))==0);
+    if(same)return;
+    if(m.resourceId!=resourceId_ || m.staticRevision!=staticRevision_)m=staticCache_;
+    m.vertices.resize(staticVertices);m.indices.resize(staticIndices);
+    m.vertices.insert(m.vertices.end(),units_.vertices.begin(),units_.vertices.end());
+    m.indices.insert(m.indices.end(),units_.indices.begin(),units_.indices.end());
+    m.shadowFirstIndex=std::uint32_t(m.indices.size());
+    m.indices.insert(m.indices.end(),staticCache_.indices.begin()+staticIndices,staticCache_.indices.end());
+    m.staticVertexBytes=staticVertices*sizeof(SceneVertex);m.staticIndexCount=staticIndices;
+    m.resourceId=resourceId_;m.staticRevision=staticRevision_;m.dynamicRevision=++dynamicRevision_;
+}
+void SceneMeshBuilder::buildStatic(SceneMesh& m,TerrainWorld& world,const Camera& camera,AtmosphereSettings atmosphere){
     m.clear();
     const auto light=atmosphereProfile(atmosphere);
     struct Caster {float x,z,height,width,reach;};
@@ -129,25 +186,6 @@ void SceneMeshBuilder::build(SceneMesh& m,TerrainWorld& world,const Simulation& 
         const float treeScale=near?.78f:1.2f;
         addTree(m,x,world.heightAt(x,z),z,treeScale,seed);
         if(atmosphere.shadows)casters.push_back({x,z,(9.f+float(seed%7u))*treeScale,near?3.7f:6.f,.85f});
-    }
-    // Tactical markers share the GPU geometry path and simulation positions.
-    if(near){
-        for(std::size_t i=0;i<sim.soldierCount();++i){
-            const auto& s=sim.soldier(i);
-            if(s.health<=0 ||std::abs(s.x-camera.focusX)>160||std::abs(s.z-camera.focusZ)>160)continue;
-            float x=float(s.x),z=float(s.z),y=world.heightAt(x,z);
-            box(m,{x,y+.95f,z},.65f,1.4f,.55f,sim.squad(s.squad).side==Side::Player?TextureMaterial::Concrete:TextureMaterial::Brick);
-        }
-    }else{
-        for(std::size_t i=0;i<sim.squadCount();++i){
-            const auto& q=sim.squad(i);float x=0,z=0;int alive=0;
-            for(std::size_t j=q.memberStart;j<q.memberStart+q.memberCount;++j){const auto& s=sim.soldier(j);if(s.health>0){x+=float(s.x);z+=float(s.z);++alive;}}
-            if(!alive)continue;
-            x/=alive;z/=alive;
-            if(std::abs(x-camera.focusX)>extent||std::abs(z-camera.focusZ)>extent)continue;
-            float y=world.heightAt(x,z);
-            box(m,{x,y+16.f,z},i==std::size_t(selectedSquad)?19.f:25.f,25.f,25.f,q.side==Side::Player?TextureMaterial::Concrete:TextureMaterial::Brick);
-        }
     }
     // Shadows are a second batch, AFTER all opaque scene indices.
     // This keeps the main pass opaque and limits blend overdraw to small quads.

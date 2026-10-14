@@ -30,6 +30,34 @@ jobs:
         with:
           name: linux-cpu-${{ matrix.configuration }}-test-log
           path: build-linux/Testing/Temporary/LastTest.log
+  linux-vulkan:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Vulkan SDK tools, validation and software driver
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake g++ libx11-dev xvfb xauth libsdl2-2.0-0 libvulkan-dev glslang-tools mesa-vulkan-drivers vulkan-validationlayers
+      - name: Configure native Vulkan tests
+        run: cmake -S . -B build-vulkan -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DGZ_ENABLE_VULKAN=ON -DGZ_REQUIRE_VULKAN=ON -DGZ_VULKAN_RUNTIME_TESTS=ON
+      - name: Build
+        run: cmake --build build-vulkan --parallel 4
+      - name: Run native Vulkan and regression tests
+        run: |
+          export VK_ICD_FILENAMES=$(find /usr/share/vulkan/icd.d -name '*lvp*.json' -print -quit)
+          test -n "$VK_ICD_FILENAMES"
+          export LP_NUM_THREADS=4
+          ctest --test-dir build-vulkan --output-on-failure --no-tests=error --parallel 4
+          if grep -q 'Vulkan validation ERROR' build-vulkan/Testing/Temporary/LastTest.log; then exit 1; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vulkan-software-driver-native-test-evidence
+          path: |
+            build-vulkan/Testing/Temporary/LastTest.log
+            graphics_backend.log
+            test_build_vulkan_*.ppm
   windows-x64-cpu:
     runs-on: windows-2022
     timeout-minutes: 20

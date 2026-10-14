@@ -9,6 +9,7 @@
 #elif defined(__linux__)
 # define VK_USE_PLATFORM_XLIB_KHR
 # include <X11/Xlib.h>
+# undef None // X11's macro conflicts with the scoped TextureMaterial::None enum.
 #endif
 #include <vulkan/vulkan.h>
 #include "gz/RenderBackend.hpp"
@@ -16,6 +17,9 @@
 #include "VulkanScenePass.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <cstdlib>
+#include <iostream>
 #include <cstring>
 #include <fstream>
 #include <limits>
@@ -44,7 +48,9 @@ bool hasInstanceExtension(const char* required){
 class VulkanBackend final:public IRenderBackend {
     NativeRenderWindow native_{};
     GraphicsLimits limits_{};
-    RenderTelemetry telemetry_{};
+    mutable RenderTelemetry telemetry_{};
+    std::atomic<std::uint64_t> validationErrors_{0};
+    VkDebugUtilsMessengerEXT debugMessenger_=VK_NULL_HANDLE;
     VkInstance instance_=VK_NULL_HANDLE;
     VkSurfaceKHR surface_=VK_NULL_HANDLE;
     VkPhysicalDevice gpu_=VK_NULL_HANDLE;
@@ -58,7 +64,8 @@ class VulkanBackend final:public IRenderBackend {
     std::vector<bool> previouslyPresented_;
     VkCommandPool pool_=VK_NULL_HANDLE;
     VkCommandBuffer command_=VK_NULL_HANDLE;
-    VkSemaphore acquired_=VK_NULL_HANDLE, finished_=VK_NULL_HANDLE;
+    VkSemaphore acquired_=VK_NULL_HANDLE;
+    std::vector<VkSemaphore> finished_;
     VkFence fence_=VK_NULL_HANDLE;
     VkBuffer staging_=VK_NULL_HANDLE;
     VkDeviceMemory memory_=VK_NULL_HANDLE;
@@ -68,6 +75,14 @@ class VulkanBackend final:public IRenderBackend {
     bool initialized_=false;
     VulkanScenePass nativeScene_{};
     bool nativeRenderTarget_=false;
+    static VKAPI_ATTR VkBool32 VKAPI_CALL validationMessage(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+        VkDebugUtilsMessageTypeFlagsEXT,const VkDebugUtilsMessengerCallbackDataEXT* data,void* user){
+        if(severity&VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
+            static_cast<VulkanBackend*>(user)->validationErrors_.fetch_add(1,std::memory_order_relaxed);
+        std::cerr<<"Vulkan validation "<<((severity&VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)?"ERROR":"WARNING")
+            <<": "<<data->pMessage<<'\n';
+        return VK_FALSE;
+    }
     void releaseStaging() noexcept {
         if(device_){
             if(memory_&&mapped_)vkUnmapMemory(device_,memory_);
@@ -84,18 +99,23 @@ class VulkanBackend final:public IRenderBackend {
         if(device_){
             if(fence_)vkDestroyFence(device_,fence_,nullptr);
             if(acquired_)vkDestroySemaphore(device_,acquired_,nullptr);
-            if(finished_)vkDestroySemaphore(device_,finished_,nullptr);
+            for(auto semaphore:finished_)if(semaphore)vkDestroySemaphore(device_,semaphore,nullptr);
             if(pool_)vkDestroyCommandPool(device_,pool_,nullptr);
             if(swapchain_)vkDestroySwapchainKHR(device_,swapchain_,nullptr);
             vkDestroyDevice(device_,nullptr);
         }
         if(instance_){
             if(surface_)vkDestroySurfaceKHR(instance_,surface_,nullptr);
+            if(debugMessenger_){
+                const auto destroyDebug=reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(vkGetInstanceProcAddr(instance_,"vkDestroyDebugUtilsMessengerEXT"));
+                if(destroyDebug)destroyDebug(instance_,debugMessenger_,nullptr);
+            }
             vkDestroyInstance(instance_,nullptr);
         }
         instance_=VK_NULL_HANDLE;surface_=VK_NULL_HANDLE;gpu_=VK_NULL_HANDLE;
         device_=VK_NULL_HANDLE;queue_=VK_NULL_HANDLE;swapchain_=VK_NULL_HANDLE;
-        fence_=VK_NULL_HANDLE;acquired_=finished_=VK_NULL_HANDLE;pool_=VK_NULL_HANDLE;
+        fence_=VK_NULL_HANDLE;acquired_=VK_NULL_HANDLE;finished_.clear();pool_=VK_NULL_HANDLE;
+        debugMessenger_=VK_NULL_HANDLE;
         command_=VK_NULL_HANDLE;initialized_=false;
         images_.clear();previouslyPresented_.clear();
     }
@@ -186,6 +206,14 @@ class VulkanBackend final:public IRenderBackend {
         nativeScene_.destroy(); // Framebuffers/image views must die before their swapchain.
         if(swapchain_)vkDestroySwapchainKHR(device_,swapchain_,nullptr);
         swapchain_=newSwapchain;images_=std::move(newImages);
+        for(auto semaphore:finished_)if(semaphore)vkDestroySemaphore(device_,semaphore,nullptr);
+        finished_.assign(images_.size(),VK_NULL_HANDLE);
+        VkSemaphoreCreateInfo semInfo{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+        for(auto& semaphore:finished_){
+            if(vkCreateSemaphore(device_,&semInfo,nullptr,&semaphore)!=VK_SUCCESS){
+                error="Could not create per-image presentation semaphore";return false;
+            }
+        }
         previouslyPresented_.assign(images_.size(),false);
         format_=chosen.format;extent_=newExtent;
         ++telemetry_.resizeCount;
@@ -236,13 +264,32 @@ public:
         if(!hasInstanceExtension(VK_KHR_SURFACE_EXTENSION_NAME)||!hasInstanceExtension(surfaceExtension)){
             error="Vulkan surface extensions unavailable";return false;
         }
-        const char* extensions[]={VK_KHR_SURFACE_EXTENSION_NAME,surfaceExtension};
+        const char* validationSetting=std::getenv("GZ_VULKAN_VALIDATION");
+        const bool validation=validationSetting && std::strcmp(validationSetting,"1")==0;
+        const char* validationLayer="VK_LAYER_KHRONOS_validation";
+        const char* extensions[]={VK_KHR_SURFACE_EXTENSION_NAME,surfaceExtension,
+            VK_EXT_DEBUG_UTILS_EXTENSION_NAME,VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME};
+        VkDebugUtilsMessengerCreateInfoEXT debugInfo{VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
+        debugInfo.messageSeverity=VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT|VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+        debugInfo.messageType=VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT|VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT|VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+        debugInfo.pfnUserCallback=validationMessage;debugInfo.pUserData=this;
+        const VkValidationFeatureEnableEXT synchronization=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT;
+        VkValidationFeaturesEXT features{VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT};
+        features.enabledValidationFeatureCount=1;features.pEnabledValidationFeatures=&synchronization;
+        features.pNext=&debugInfo;
         VkApplicationInfo info{VK_STRUCTURE_TYPE_APPLICATION_INFO};
         info.pApplicationName="GRAY ZONE: 1989";info.applicationVersion=VK_MAKE_VERSION(0,0,21);
         info.pEngineName="GZ89";info.engineVersion=VK_MAKE_VERSION(0,0,21);info.apiVersion=VK_API_VERSION_1_0;
         VkInstanceCreateInfo ic{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
-        ic.pApplicationInfo=&info;ic.enabledExtensionCount=2;ic.ppEnabledExtensionNames=extensions;
+        ic.pApplicationInfo=&info;ic.enabledExtensionCount=validation?4:2;ic.ppEnabledExtensionNames=extensions;
+        if(validation){ic.enabledLayerCount=1;ic.ppEnabledLayerNames=&validationLayer;ic.pNext=&features;}
         if(vkCreateInstance(&ic,nullptr,&instance_)!=VK_SUCCESS){error="vkCreateInstance failed";return false;}
+        if(validation){
+            const auto createDebug=reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(vkGetInstanceProcAddr(instance_,"vkCreateDebugUtilsMessengerEXT"));
+            if(!createDebug || createDebug(instance_,&debugInfo,nullptr,&debugMessenger_)!=VK_SUCCESS){
+                error="Could not enable Vulkan validation diagnostics";return false;
+            }
+        }
 #ifdef _WIN32
         VkWin32SurfaceCreateInfoKHR si{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
         si.hinstance=GetModuleHandleW(nullptr);si.hwnd=reinterpret_cast<HWND>(native.window);
@@ -287,8 +334,7 @@ public:
         ci.commandPool=pool_;ci.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;ci.commandBufferCount=1;
         if(vkAllocateCommandBuffers(device_,&ci,&command_)!=VK_SUCCESS){error="vkAllocateCommandBuffers failed";return false;}
         VkSemaphoreCreateInfo sem{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-        if(vkCreateSemaphore(device_,&sem,nullptr,&acquired_)!=VK_SUCCESS ||
-           vkCreateSemaphore(device_,&sem,nullptr,&finished_)!=VK_SUCCESS){error="Vulkan semaphore creation failed";return false;}
+        if(vkCreateSemaphore(device_,&sem,nullptr,&acquired_)!=VK_SUCCESS){error="Vulkan semaphore creation failed";return false;}
         VkFenceCreateInfo fi{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};fi.flags=VK_FENCE_CREATE_SIGNALED_BIT;
         if(vkCreateFence(device_,&fi,nullptr,&fence_)!=VK_SUCCESS){error="vkCreateFence failed";return false;}
         if(!createSwapchain(native.width,native.height,error))return false;
@@ -377,10 +423,10 @@ public:
         VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
         submit.waitSemaphoreCount=1;submit.pWaitSemaphores=&acquired_;submit.pWaitDstStageMask=&waitStage;
         submit.commandBufferCount=1;submit.pCommandBuffers=&command_;
-        submit.signalSemaphoreCount=1;submit.pSignalSemaphores=&finished_;
+        submit.signalSemaphoreCount=1;submit.pSignalSemaphores=&finished_[image];
         if(vkQueueSubmit(queue_,1,&submit,fence_)!=VK_SUCCESS){error="vkQueueSubmit failed";return false;}
         VkPresentInfoKHR presentInfo{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
-        presentInfo.waitSemaphoreCount=1;presentInfo.pWaitSemaphores=&finished_;
+        presentInfo.waitSemaphoreCount=1;presentInfo.pWaitSemaphores=&finished_[image];
         presentInfo.swapchainCount=1;presentInfo.pSwapchains=&swapchain_;presentInfo.pImageIndices=&image;
         result=vkQueuePresentKHR(queue_,&presentInfo);
         if(result!=VK_SUCCESS && result!=VK_SUBOPTIMAL_KHR){error="vkQueuePresentKHR failed";return false;}
@@ -396,6 +442,8 @@ public:
             }
             telemetry_.nativeSceneTriangles+=nativeScene_.triangleCount();
             telemetry_.meshUploadedBytes+=meshBytes;
+            if(!meshBytes)++telemetry_.skippedMeshUploads;
+            telemetry_.meshResidentBytes=nativeScene_.residentBytes();
             telemetry_.uploadedBytes+=meshBytes;
         }else{
             telemetry_.uploadedBytes+=std::uint64_t(extent_.width)*extent_.height*4;
@@ -404,7 +452,9 @@ public:
     }
     void waitIdle()noexcept override{if(device_)vkDeviceWaitIdle(device_);}
     bool ready()const noexcept override{return initialized_;}
-    const RenderTelemetry& telemetry()const noexcept override{return telemetry_;}
+    const RenderTelemetry& telemetry()const noexcept override{
+        telemetry_.validationErrors=validationErrors_.load(std::memory_order_relaxed);return telemetry_;
+    }
 };
 } // namespace
 std::unique_ptr<IRenderBackend> makeVulkanBackend(){return std::make_unique<VulkanBackend>();}

@@ -1,0 +1,73 @@
+#include "TestCheck.hpp"
+#include "gz/NativeScene.hpp"
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#include <chrono>
+#include <fstream>
+#include <iostream>
+#include <set>
+#include <thread>
+#include <vector>
+
+static std::vector<unsigned long> capture(Display* display,Window window,int width,int height,const char* path){
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));XSync(display,False);
+    auto* image=XGetImage(display,window,0,0,width,height,AllPlanes,ZPixmap);GZ_CHECK(image);
+    std::vector<unsigned long> pixels;
+    std::ofstream out(path,std::ios::binary);GZ_CHECK(bool(out));
+    out<<"P6\n"<<width<<' '<<height<<"\n255\n";
+    for(int y=0;y<height;++y)for(int x=0;x<width;++x){
+        const auto p=XGetPixel(image,x,y);pixels.push_back(p);
+        const char rgb[]={char((p>>16)&255),char((p>>8)&255),char(p&255)};out.write(rgb,3);
+    }
+    XDestroyImage(image);GZ_CHECK(bool(out));
+    GZ_CHECK(std::set<unsigned long>(pixels.begin(),pixels.end()).size()>8);
+    return pixels;
+}
+int main(){
+    XInitThreads();auto* display=XOpenDisplay(nullptr);GZ_CHECK(display);
+    const int width=320,height=240;
+    const auto window=XCreateSimpleWindow(display,DefaultRootWindow(display),0,0,width,height,0,0,0);
+    XMapWindow(display,window);XSync(display,False);
+    gz::RenderBackendHost host;
+    GZ_CHECK(host.initialize({gz::WindowSystem::Xlib,display,window,width,height},gz::GraphicsAPI::Vulkan));
+    if(!host.nativeSceneReady())std::cerr<<"Native Vulkan unavailable: "<<host.error()<<'\n';
+    GZ_CHECK(host.activeAPI()==gz::GraphicsAPI::Vulkan && host.nativeSceneReady());
+    gz::Simulation sim(2);sim.newOperation(96);
+    gz::TerrainWorld terrain(9);terrain.setTileDirectory("assets/terrain");
+    gz::Camera camera;camera.focusX=3000;camera.focusZ=1250;camera.distance=900;
+    gz::SceneMesh mesh;gz::SceneMeshBuilder builder;
+    std::vector<std::uint32_t> sentinel(width*height,0xffff00ffu);
+    auto submit=[&](){
+        builder.build(mesh,terrain,sim,camera,0);
+        gz::RenderSubmission frame;
+        frame.fallbackFrame={sentinel.data(),width,height,width,gz::PixelFormat::BGRA8};
+        frame.worldMesh=gz::makeGeometryView(mesh);
+        frame.camera=gz::makeGpuSceneCamera(camera,terrain.heightAt(camera.focusX,camera.focusZ),{});
+        frame.visualTimeSeconds=7;
+        GZ_CHECK(host.submit(frame));GZ_CHECK(host.activeAPI()==gz::GraphicsAPI::Vulkan);
+    };
+    submit();const auto first=host.telemetry().meshUploadedBytes;
+    GZ_CHECK(first==gz::makeGeometryView(mesh).vertexBytes+gz::makeGeometryView(mesh).indexCount*4);
+    for(int i=0;i<8;++i)submit();
+    GZ_CHECK(host.telemetry().meshUploadedBytes==first && host.telemetry().skippedMeshUploads==8);
+    const auto original=capture(display,window,width,height,"test_build_vulkan_static.ppm");
+    sim.step(30);submit();
+    const auto view=gz::makeGeometryView(mesh);
+    const auto delta=host.telemetry().meshUploadedBytes-first;
+    GZ_CHECK(delta==view.vertexBytes-view.staticVertexBytes+(view.indexCount-view.staticIndexCount)*4);
+    GZ_CHECK(delta>0 && delta<first/10);
+    const auto moved=capture(display,window,width,height,"test_build_vulkan_units.ppm");GZ_CHECK(moved!=original);
+    auto before=host.telemetry().meshUploadedBytes;
+    camera.yaw+=.3f;submit();GZ_CHECK(host.telemetry().meshUploadedBytes==before);
+    camera.focusX+=25;submit();GZ_CHECK(host.telemetry().meshUploadedBytes>before+first/2);
+    before=host.telemetry().meshUploadedBytes;
+    GZ_CHECK(host.resize(width,height) && host.nativeSceneReady());submit();
+    GZ_CHECK(host.telemetry().meshUploadedBytes>before+first/2);
+    GZ_CHECK(host.telemetry().nativeSceneFrames==13);
+    GZ_CHECK(host.telemetry().meshResidentBytes<=128u*1024u*1024u);
+    GZ_CHECK(host.telemetry().validationErrors==0);
+    std::cout<<"Native Vulkan: 13 frames, first upload="<<first<<" bytes, unit update="<<delta
+        <<" bytes, skipped="<<host.telemetry().skippedMeshUploads
+        <<", resident="<<host.telemetry().meshResidentBytes<<" bytes; actual X11 native frames captured; validation errors=0\n";
+    host.shutdown();XDestroyWindow(display,window);XCloseDisplay(display);
+}

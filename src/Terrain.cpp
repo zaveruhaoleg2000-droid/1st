@@ -252,7 +252,7 @@ bool TerrainWorld::exportSector(TerrainSectorId id,const std::string& path,bool 
     auto& m=acquire(id);
     return pgm?m.savePGM16(path):m.saveBinary(path);
 }
-void TerrainWorld::setTileDirectory(std::string directory){directory_=std::move(directory);cache_.clear();}
+void TerrainWorld::setTileDirectory(std::string directory){directory_=std::move(directory);cache_.clear();++contentRevision_;}
 void TerrainWorld::setMaxCachedSectors(std::size_t n){maxCached_=std::clamp(n,std::size_t(1),std::size_t(16));while(cache_.size()>maxCached_)cache_.pop_back();}
 std::size_t TerrainWorld::cachedBytes() const {std::size_t b=0;for(const auto& e:cache_)b+=e.map.bytes();return b;}
 }

@@ -67,6 +67,33 @@ bool VulkanScenePass::makeBuffer(HostBuffer& target,VkDeviceSize size,VkBufferUs
         error="Could not allocate/map GPU mesh staging";destroyBuffer(target);return false;
     }
     target.capacity=size;
+    target.allocationBytes=req.size;
+    return true;
+}
+void VulkanScenePass::destroyDeviceBuffer(DeviceBuffer& target)noexcept{
+    if(device_){
+        if(target.buffer)vkDestroyBuffer(device_,target.buffer,nullptr);
+        if(target.memory)vkFreeMemory(device_,target.memory,nullptr);
+    }
+    target={};
+}
+bool VulkanScenePass::makeDeviceBuffer(DeviceBuffer& target,VkDeviceSize size,VkBufferUsageFlags usage,std::string& error){
+    if(target.buffer && target.capacity>=size)return true;
+    destroyDeviceBuffer(target);
+    VkBufferCreateInfo ci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    ci.size=size;ci.usage=usage|VK_BUFFER_USAGE_TRANSFER_DST_BIT;ci.sharingMode=VK_SHARING_MODE_EXCLUSIVE;
+    if(vkCreateBuffer(device_,&ci,nullptr,&target.buffer)!=VK_SUCCESS){error="Could not create device-local mesh buffer";return false;}
+    VkMemoryRequirements need{};vkGetBufferMemoryRequirements(device_,target.buffer,&need);
+    std::uint32_t type=0;
+    if(!allocMemory(need.memoryTypeBits,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,type)){
+        error="No device-local mesh memory";destroyDeviceBuffer(target);return false;
+    }
+    VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};ai.allocationSize=need.size;ai.memoryTypeIndex=type;
+    if(vkAllocateMemory(device_,&ai,nullptr,&target.memory)!=VK_SUCCESS ||
+       vkBindBufferMemory(device_,target.buffer,target.memory,0)!=VK_SUCCESS){
+        error="Could not allocate device-local mesh memory";destroyDeviceBuffer(target);return false;
+    }
+    target.capacity=size;target.allocationBytes=need.size;
     return true;
 }
 bool VulkanScenePass::makeDepth(std::string& error){
@@ -113,9 +140,10 @@ bool VulkanScenePass::makeRenderPass(std::string& error){
     sub.colorAttachmentCount=1;sub.pColorAttachments=&color;sub.pDepthStencilAttachment=&depth;
     std::array<VkSubpassDependency,2> deps{};
     deps[0].srcSubpass=VK_SUBPASS_EXTERNAL;deps[0].dstSubpass=0;
-    deps[0].srcStageMask=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    deps[0].dstStageMask=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT|VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    deps[0].dstAccessMask=VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT|VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    deps[0].srcStageMask=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT|VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    deps[0].srcAccessMask=VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT|VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    deps[0].dstStageMask=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT|VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT|VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    deps[0].dstAccessMask=VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT|VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT|VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     deps[1].srcSubpass=0;deps[1].dstSubpass=VK_SUBPASS_EXTERNAL;
     deps[1].srcStageMask=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     deps[1].dstStageMask=VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
@@ -127,8 +155,12 @@ bool VulkanScenePass::makeRenderPass(std::string& error){
     return true;
 }
 bool VulkanScenePass::makePipeline(std::string& error){
-    const auto vertexSpirv=readSpirv("assets/shaders/vulkan/native_scene.vert.spv");
-    const auto fragmentSpirv=readSpirv("assets/shaders/vulkan/native_scene.frag.spv");
+    auto vertexSpirv=readSpirv("assets/shaders/vulkan/native_scene.vert.spv");
+    auto fragmentSpirv=readSpirv("assets/shaders/vulkan/native_scene.frag.spv");
+#ifdef GZ_SHADER_DIR
+    if(vertexSpirv.empty())vertexSpirv=readSpirv((std::string(GZ_SHADER_DIR)+"/native_scene.vert.spv").c_str());
+    if(fragmentSpirv.empty())fragmentSpirv=readSpirv((std::string(GZ_SHADER_DIR)+"/native_scene.frag.spv").c_str());
+#endif
     if(vertexSpirv.empty() || fragmentSpirv.empty()){
         error="GPU SPIR-V files missing: build the shader target with glslangValidator";return false;
     }
@@ -208,6 +240,8 @@ void VulkanScenePass::destroySwapchain()noexcept{
 }
 void VulkanScenePass::destroy()noexcept{
     destroySwapchain();destroyBuffer(vertex_);destroyBuffer(index_);
+    destroyDeviceBuffer(vertexDevice_);destroyDeviceBuffer(indexDevice_);
+    uploads_.reset();pending_={};pendingMesh_={};
     device_=VK_NULL_HANDLE;physical_=VK_NULL_HANDLE;indices_=0;
 }
 bool VulkanScenePass::initialize(VkPhysicalDevice physical,VkDevice device,VkFormat format,VkExtent2D extent,
@@ -235,31 +269,70 @@ bool VulkanScenePass::initialize(VkPhysicalDevice physical,VkDevice device,VkFor
     ready_=true;return true;
 }
 bool VulkanScenePass::upload(const GeometryView& mesh,std::uint64_t& bytes,std::string& error){
+    bytes=0;pending_={};
     if(!ready_||!mesh.valid()||mesh.strideBytes!=sizeof(SceneVertex)){
         error="Native GPU mesh format invalid";return false;
     }
     const std::size_t ib=mesh.indexCount*sizeof(std::uint32_t);
-    if(mesh.vertexBytes+ib>budget_){error="Native mesh exceeds configured 128 MiB budget";return false;}
-    if(!makeBuffer(vertex_,std::max<std::size_t>(256u,mesh.vertexBytes),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,error)||
-       !makeBuffer(index_,std::max<std::size_t>(256u,ib),VK_BUFFER_USAGE_INDEX_BUFFER_BIT,error))return false;
-    std::memcpy(vertex_.mapped,mesh.vertices,mesh.vertexBytes);
-    std::memcpy(index_.mapped,mesh.indices,ib);
-    if(!vertex_.coherent){
+    if(mesh.vertexBytes>budget_/2 || ib>budget_/2-mesh.vertexBytes){
+        error="Native mesh staging and device buffers exceed streaming budget";return false;
+    }
+    const auto vbCapacity=vertexDevice_.capacity,ibCapacity=indexDevice_.capacity;
+    if(!makeBuffer(vertex_,std::max<std::size_t>(256u,mesh.vertexBytes),VK_BUFFER_USAGE_TRANSFER_SRC_BIT,error)||
+       !makeBuffer(index_,std::max<std::size_t>(256u,ib),VK_BUFFER_USAGE_TRANSFER_SRC_BIT,error)||
+       !makeDeviceBuffer(vertexDevice_,std::max<std::size_t>(256u,mesh.vertexBytes),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,error)||
+       !makeDeviceBuffer(indexDevice_,std::max<std::size_t>(256u,ib),VK_BUFFER_USAGE_INDEX_BUFFER_BIT,error))return false;
+    if(residentBytes()>budget_){error="Aligned native mesh allocations exceed streaming budget";return false;}
+    pending_=uploads_.plan(mesh,vertexDevice_.capacity!=vbCapacity,indexDevice_.capacity!=ibCapacity);
+    const auto vertexCount=mesh.vertexBytes/sizeof(SceneVertex);
+    for(std::size_t i=pending_.indices.offset/sizeof(std::uint32_t);pending_.indices.bytes && i<mesh.indexCount;++i){
+        if(mesh.indices[i]>=vertexCount || (mesh.resourceId && mesh.staticRevision && i<mesh.staticIndexCount &&
+           mesh.indices[i]>=mesh.staticVertexBytes/sizeof(SceneVertex))){
+            error="Native mesh index exceeds its vertex range";pending_={};return false;
+        }
+    }
+    if(pending_.vertices.bytes)std::memcpy(static_cast<std::uint8_t*>(vertex_.mapped)+pending_.vertices.offset,
+        static_cast<const std::uint8_t*>(mesh.vertices)+pending_.vertices.offset,pending_.vertices.bytes);
+    if(pending_.indices.bytes)std::memcpy(static_cast<std::uint8_t*>(index_.mapped)+pending_.indices.offset,
+        reinterpret_cast<const std::uint8_t*>(mesh.indices)+pending_.indices.offset,pending_.indices.bytes);
+    if(pending_.vertices.bytes && !vertex_.coherent){
         VkMappedMemoryRange flush{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};
         flush.memory=vertex_.memory;flush.size=VK_WHOLE_SIZE;
         if(vkFlushMappedMemoryRanges(device_,1,&flush)!=VK_SUCCESS){error="Vertex flush failed";return false;}
     }
-    if(!index_.coherent){
+    if(pending_.indices.bytes && !index_.coherent){
         VkMappedMemoryRange flush{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};
         flush.memory=index_.memory;flush.size=VK_WHOLE_SIZE;
         if(vkFlushMappedMemoryRanges(device_,1,&flush)!=VK_SUCCESS){error="Index flush failed";return false;}
     }
     indices_=std::uint32_t(mesh.indexCount);
-    bytes=mesh.vertexBytes+ib;
+    bytes=pending_.bytes();pendingMesh_=mesh;
     return true;
 }
 void VulkanScenePass::record(VkCommandBuffer cmd,std::uint32_t image,const GpuFrameConstants& constants){
     if(!ready_||image>=framebuffers_.size())return;
+    std::array<VkBufferMemoryBarrier,2> barriers{};
+    std::uint32_t count=0;
+    auto copy=[&](const MeshUpdateRange& update,const HostBuffer& host,const DeviceBuffer& gpu,VkAccessFlags access){
+        if(!update.bytes)return;
+        VkBufferMemoryBarrier writable{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+        writable.srcAccessMask=access;writable.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
+        writable.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;writable.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+        writable.buffer=gpu.buffer;writable.offset=update.offset;writable.size=update.bytes;
+        vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,
+            0,nullptr,1,&writable,0,nullptr);
+        VkBufferCopy region{update.offset,update.offset,update.bytes};
+        vkCmdCopyBuffer(cmd,host.buffer,gpu.buffer,1,&region);
+        auto& barrier=barriers[count++];barrier.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        barrier.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;barrier.dstAccessMask=access;
+        barrier.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;barrier.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+        barrier.buffer=gpu.buffer;barrier.offset=update.offset;barrier.size=update.bytes;
+    };
+    copy(pending_.vertices,vertex_,vertexDevice_,VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT);
+    copy(pending_.indices,index_,indexDevice_,VK_ACCESS_INDEX_READ_BIT);
+    if(count)vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,0,
+        0,nullptr,count,barriers.data(),0,nullptr);
+    uploads_.commit(pendingMesh_);pending_={};
     std::array<VkClearValue,2> clear{};
     clear[0].color={{.35f,.45f,.50f,1.f}};
     clear[1].depthStencil={1.f,0};
@@ -269,8 +342,8 @@ void VulkanScenePass::record(VkCommandBuffer cmd,std::uint32_t image,const GpuFr
     vkCmdBeginRenderPass(cmd,&rp,VK_SUBPASS_CONTENTS_INLINE);
     vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,pipeline_);
     const VkDeviceSize offset=0;
-    vkCmdBindVertexBuffers(cmd,0,1,&vertex_.buffer,&offset);
-    vkCmdBindIndexBuffer(cmd,index_.buffer,0,VK_INDEX_TYPE_UINT32);
+    vkCmdBindVertexBuffers(cmd,0,1,&vertexDevice_.buffer,&offset);
+    vkCmdBindIndexBuffer(cmd,indexDevice_.buffer,0,VK_INDEX_TYPE_UINT32);
     vkCmdPushConstants(cmd,layout_,VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT,0,
                        sizeof(GpuFrameConstants),&constants);
     vkCmdDrawIndexed(cmd,indices_,1,0,0,0);

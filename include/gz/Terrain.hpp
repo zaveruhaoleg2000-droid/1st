@@ -53,6 +53,7 @@ public:
     void setMaxCachedSectors(std::size_t n);
     void setTileDirectory(std::string directory);
     std::uint64_t diskLoads() const { return diskLoads_; }
+    std::uint64_t contentRevision()const{return contentRevision_;}
 private:
     HeightMap& acquire(TerrainSectorId id);
     struct CacheEntry { TerrainSectorId id; HeightMap map; };
@@ -60,6 +61,7 @@ private:
     std::size_t maxCached_ = 4;
     std::uint64_t generationCount_ = 0;
     std::uint64_t diskLoads_ = 0;
+    std::uint64_t contentRevision_ = 0;
     std::string directory_;
 };
 }

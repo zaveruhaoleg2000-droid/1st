@@ -30,7 +30,7 @@ ctest --test-dir build-linux --output-on-failure
 
 - Є меню, стратегічна карта Європи, сценарії, тактична симуляція й контрактний цикл.
 - Є CPU-рендерер, графічний каркас Vulkan, експериментальна native GPU сцена і заглушка DirectX.
-- **Не підтверджено:** повноцінний Vulkan GPU-рендер на відеокарті та запуск Windows EXE.
+- Windows x64 Vulkan/CPU EXE зібрано; CPU запуск із готової папки перевірено під Wine. Native Vulkan кадри перевірено через Mesa Lavapipe та synchronization validation; фізична відеокарта й Windows 11 ще не перевірені. Результати оптимізації: [docs/GPU_OPTIMIZATION_UA.md](docs/GPU_OPTIMIZATION_UA.md).
 - `GPU_PROBE_WINDOWS.bat` допоможе перевірити Vulkan-драйвер у Windows. Для повного звіту дивись `GPU_DIAGNOSTICS_v022_UA.md`.
 - Графічні цілі: 4 потоки CPU / 4 ГБ RAM / 2 ГБ VRAM / до 1 ГБ встановлення; 1080p 60 FPS — лише орієнтир.
 

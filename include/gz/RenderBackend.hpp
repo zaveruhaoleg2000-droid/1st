@@ -35,9 +35,14 @@ struct GeometryView {
     std::size_t strideBytes=0;
     const std::uint32_t* indices=nullptr;
     std::size_t indexCount=0;
+    // Immutable prefix followed by dynamic units. Zero IDs/revisions request a
+    // complete upload, preserving compatibility with unversioned callers.
+    std::size_t staticVertexBytes=0,staticIndexCount=0;
+    std::uint64_t resourceId=0,staticRevision=0,dynamicRevision=0;
     bool valid()const noexcept{
         return vertices && vertexBytes && strideBytes && vertexBytes%strideBytes==0 &&
-            indices && indexCount && indexCount<=16'000'000;
+            indices && indexCount && indexCount<=16'000'000 &&
+            staticVertexBytes<=vertexBytes && staticVertexBytes%strideBytes==0 && staticIndexCount<=indexCount;
     }
 };
 struct RenderSubmission {
@@ -61,6 +66,9 @@ struct RenderTelemetry {
     std::uint64_t nativeSceneFrames=0;
     std::uint64_t nativeSceneTriangles=0;
     std::uint64_t meshUploadedBytes=0;
+    std::uint64_t skippedMeshUploads=0;
+    std::uint64_t meshResidentBytes=0;
+    std::uint64_t validationErrors=0;
 };
 class IRenderBackend {
 public:

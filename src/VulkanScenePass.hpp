@@ -2,6 +2,7 @@
 #include <vulkan/vulkan.h>
 #include "gz/RenderBackend.hpp"
 #include "gz/SceneMesh.hpp"
+#include "gz/GeometryStaging.hpp"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -16,7 +17,13 @@ class VulkanScenePass {
         VkDeviceMemory memory=VK_NULL_HANDLE;
         void* mapped=nullptr;
         VkDeviceSize capacity=0;
+        VkDeviceSize allocationBytes=0;
         bool coherent=false;
+    };
+    struct DeviceBuffer {
+        VkBuffer buffer=VK_NULL_HANDLE;
+        VkDeviceMemory memory=VK_NULL_HANDLE;
+        VkDeviceSize capacity=0,allocationBytes=0;
     };
     VkPhysicalDevice physical_=VK_NULL_HANDLE;
     VkDevice device_=VK_NULL_HANDLE;
@@ -32,6 +39,10 @@ class VulkanScenePass {
     std::vector<VkImageView> colorViews_;
     std::vector<VkFramebuffer> framebuffers_;
     HostBuffer vertex_,index_;
+    DeviceBuffer vertexDevice_,indexDevice_;
+    MeshUploadTracker uploads_;
+    MeshUploadPlan pending_{};
+    GeometryView pendingMesh_{};
     std::uint32_t indices_=0;
     std::size_t budget_=128u*1024u*1024u;
     bool ready_=false;
@@ -39,6 +50,8 @@ class VulkanScenePass {
                      std::uint32_t& result)const;
     bool makeBuffer(HostBuffer& target,VkDeviceSize size,VkBufferUsageFlags usage,std::string& error);
     void destroyBuffer(HostBuffer& target)noexcept;
+    bool makeDeviceBuffer(DeviceBuffer& target,VkDeviceSize size,VkBufferUsageFlags usage,std::string& error);
+    void destroyDeviceBuffer(DeviceBuffer& target)noexcept;
     bool makeDepth(std::string& error);
     bool makeRenderPass(std::string& error);
     bool makePipeline(std::string& error);
@@ -55,5 +68,6 @@ public:
     bool upload(const GeometryView& mesh,std::uint64_t& bytes,std::string& error);
     void record(VkCommandBuffer command,std::uint32_t swapImage,const GpuFrameConstants& constants);
     std::uint32_t triangleCount()const noexcept{return indices_/3;}
+    std::uint64_t residentBytes()const noexcept{return vertex_.allocationBytes+index_.allocationBytes+vertexDevice_.allocationBytes+indexDevice_.allocationBytes;}
 };
 } // namespace gz
