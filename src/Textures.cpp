@@ -10,9 +10,9 @@ namespace {
 constexpr const char* NAMES[] = {
     "none", "grass_short", "grass_tall", "meadow", "dirt_dry", "mud_wet",
     "sand", "gravel", "rock", "asphalt", "concrete", "brick", "wood_planks",
-    "tree_bark", "leaves", "water", "snow", "player_uniform", "opponent_uniform", "skin", "armor", "rubber", "glass", "roof", "weapon_metal", "weapon_wood", "fabric", "stone", "roof_slate", "leaves_dry", "fence", "crate"
+    "tree_bark", "leaves", "water", "snow", "player_uniform", "opponent_uniform", "skin", "armor", "rubber", "glass", "roof", "weapon_metal", "weapon_wood", "fabric", "stone", "roof_slate", "leaves_dry", "fence", "crate", "rubble", "moss", "reed_stem", "wildflowers", "pine_bark", "plaster", "rust", "ceramic_tile"
 };
-constexpr float TILES[] = { 1.f,4.f,5.f,3.5f,4.f,3.f,3.f,4.f,4.f,3.f,2.f,4.f,3.f,3.f,3.f,1.5f,1.8f,.35f,.35f,.3f,1.f,.6f,1.f,3.f,.3f,.4f,.3f,2.f,3.f,2.f,1.f,1.f };
+constexpr float TILES[] = { 1.f,4.f,5.f,3.5f,4.f,3.f,3.f,4.f,4.f,3.f,2.f,4.f,3.f,3.f,3.f,1.5f,1.8f,.35f,.35f,.3f,1.f,.6f,1.f,3.f,.3f,.4f,.3f,2.f,3.f,2.f,1.f,1.f,2.f,1.f,.4f,1.f,2.f,2.f,1.f,1.5f };
 constexpr std::size_t COUNT=sizeof(NAMES)/sizeof(NAMES[0]);
 static_assert(COUNT==static_cast<std::size_t>(TextureMaterial::Count));
 }

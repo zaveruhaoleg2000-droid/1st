@@ -13,6 +13,7 @@
 #include "gz/Diagnostics.hpp"
 #include "gz/TacticalHud.hpp"
 #include "gz/PlayerController.hpp"
+#include "gz/Sprites.hpp"
 #include <cstdlib>
 #include <algorithm>
 #include <chrono>
@@ -36,6 +37,7 @@ struct App {
     gz::DebugHud debugHud;
     gz::TacticalHud tacticalHud;
     gz::TerrainAppearance terrainAppearance;
+    gz::SpriteBatch sprites;
     int gpuQuality=2;
     bool showDiagnostics=false;
     bool gpuEnabled=false;
@@ -325,6 +327,7 @@ struct App {
         submission.simulationTick=sim.stats().tick;
         submission.visualTimeSeconds=renderer.visualTime();
         if(nativeTactical){
+            sprites.build(gpuTerrain,sim,camera,atmosphere,renderer.visualTime(),gpuQuality,renderer.effects().wind);submission.spriteMesh=sprites.geometry();
             submission.worldMesh=gz::makeGeometryView(gpuMesh);
             submission.terrainMacro=terrainAppearance.view();
             submission.camera=gz::makeGpuSceneCamera(camera,gpuTerrain.heightAt(camera.focusX,camera.focusZ),atmosphere,renderer.effects());
@@ -519,7 +522,7 @@ int gpuPackageSmoke(App& app,bool rendererInitialized){
     while(app.gpu.activeAPI()==gz::GraphicsAPI::Vulkan && app.gpu.telemetry().terrainTextureResolution!=expectedMacro && Clock::now()<deadline){app.paint();Sleep(20);}
     const auto& stats=app.gpu.telemetry();
     log<<"frames="<<stats.nativeSceneFrames<<", UI="<<stats.interfaceUploadedBytes<<", macro="<<stats.terrainTextureResolution<<", expected="<<expectedMacro<<", status="<<app.gpu.error()<<'\n';
-    if(!check(app.gpu.activeAPI()==gz::GraphicsAPI::Vulkan && stats.nativeSceneFrames>=6 && stats.interfaceUploadedBytes>0 && stats.terrainTextureResolution==expectedMacro &&
+    if(!check(app.gpu.activeAPI()==gz::GraphicsAPI::Vulkan && stats.nativeSceneFrames>=6 && stats.interfaceUploadedBytes>0&&stats.spriteUploadedBytes>0&&stats.spriteCount>0 && stats.terrainTextureResolution==expectedMacro &&
               stats.materialTextureCount==std::size_t(gz::TextureMaterial::Count)-1 && stats.validationErrors==0,"native Vulkan frames, HUD and generated terrain macro submitted"))return 5;
     log<<"native frames="<<stats.nativeSceneFrames<<", terrain macro="<<stats.terrainTextureResolution<<", UI bytes="<<stats.interfaceUploadedBytes<<", textures="<<stats.materialTextureCount<<", shadow="<<stats.shadowMapSize<<", MSAA="<<stats.msaaSamples
        <<", graphics allocations="<<stats.graphicsResidentBytes<<", validation errors="<<stats.validationErrors<<'\n';
@@ -570,7 +573,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
     wc.lpszClassName=L"GZ89_NATIVE_3D";wc.lpfnWndProc=WindowProc;
     wc.hCursor=LoadCursor(nullptr,IDC_ARROW);wc.hIcon=LoadIcon(nullptr,IDI_APPLICATION);
     if(!RegisterClassExW(&wc))return 1;
-    HWND hwnd=CreateWindowExW(0,wc.lpszClassName,L"GRAY ZONE: 1989 — v0.0.24",WS_OVERLAPPEDWINDOW|WS_VISIBLE,
+    HWND hwnd=CreateWindowExW(0,wc.lpszClassName,L"GRAY ZONE: 1989 — v0.0.26",WS_OVERLAPPEDWINDOW|WS_VISIBLE,
         CW_USEDEFAULT,CW_USEDEFAULT,1150,760,nullptr,nullptr,instance,&app);
     if(!hwnd)return 2;app.hwnd=hwnd;ShowWindow(hwnd,show);
     RECT rc;GetClientRect(hwnd,&rc);app.renderer.resize(rc.right,rc.bottom);
@@ -579,7 +582,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
     app.gpuEnabled=app.gpu.usingGPU(); // prefer Vulkan; runtime fallback via GDI
     {
         std::ofstream log("graphics_backend.log",std::ios::app);
-        log<<"GZ89 v0.0.24 renderer="<<gz::graphicsAPIName(app.gpu.activeAPI())
+        log<<"GZ89 v0.0.26 renderer="<<gz::graphicsAPIName(app.gpu.activeAPI())
            <<" preference="<<gz::graphicsAPIName(app.rendererPreference)
            <<" status="<<app.gpu.error()<<"\n";
     }

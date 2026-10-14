@@ -5,8 +5,8 @@ from pathlib import Path
 import argparse, json, struct, hashlib
 import numpy as np
 from PIL import Image
-NAMES=['grass_short','grass_tall','meadow','dirt_dry','mud_wet','sand','gravel','rock','asphalt','concrete','brick','wood_planks','tree_bark','leaves','water','snow','player_uniform','opponent_uniform','skin','armor','rubber','glass','roof','weapon_metal','weapon_wood','fabric','stone','roof_slate','leaves_dry','fence','crate']
-COLORS=[(91,104,63),(67,85,48),(112,117,74),(120,99,70),(73,66,50),(165,148,105),(113,111,100),(117,119,110),(62,66,66),(141,139,121),(130,78,59),(117,91,61),(94,81,57),(62,85,46),(42,86,91),(219,224,220),(73,86,49),(106,92,65),(180,138,106),(67,78,55),(31,33,31),(75,113,124),(116,76,55),(60,66,70),(111,76,44),(115,111,88),(126,128,117),(80,88,91),(114,94,54),(112,116,106),(119,101,67)]
+NAMES=['grass_short','grass_tall','meadow','dirt_dry','mud_wet','sand','gravel','rock','asphalt','concrete','brick','wood_planks','tree_bark','leaves','water','snow','player_uniform','opponent_uniform','skin','armor','rubber','glass','roof','weapon_metal','weapon_wood','fabric','stone','roof_slate','leaves_dry','fence','crate','rubble','moss','reed_stem','wildflowers','pine_bark','plaster','rust','ceramic_tile']
+COLORS=[(91,104,63),(67,85,48),(112,117,74),(120,99,70),(73,66,50),(165,148,105),(113,111,100),(117,119,110),(62,66,66),(141,139,121),(130,78,59),(117,91,61),(94,81,57),(62,85,46),(42,86,91),(219,224,220),(73,86,49),(106,92,65),(180,138,106),(67,78,55),(31,33,31),(75,113,124),(116,76,55),(60,66,70),(111,76,44),(115,111,88),(126,128,117),(80,88,91),(114,94,54),(112,116,106),(119,101,67),(102,101,92),(65,77,44),(109,117,67),(162,152,85),(90,71,48),(172,165,140),(113,70,42),(142,144,131)]
 def material(index,size,seed):
     rng=np.random.default_rng(seed+index*997);yy,xx=np.mgrid[:size,:size]/size
     noise=np.zeros((size,size),np.float32)
@@ -48,9 +48,9 @@ def main():
     files=list((args.output/'runtime').glob('*.gzt'))+list((args.output/'normals').glob('*.gzt'))
     disk=sum(p.stat().st_size for p in files)
     def mip(n):return sum((max(1,n>>i)**2)*4 for i in range(n.bit_length()))
-    resident=mip(512)*32+mip(256)*32+mip(2048)+576*484
+    resident=mip(512)*(len(NAMES)+1)+mip(256)*(len(NAMES)+1)+mip(2048)+576*484
     assert disk<=100_000_000 and resident<=100_000_000
     manifest={'generator_version':1,'seed':args.seed,'materials':NAMES,'disk_bytes':disk,'max_texture_resident_bytes':resident,'budget_bytes':100_000_000,'macro_high':2048,'files':{str(p.relative_to(args.output)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(files)}}
     (args.output/'procedural_manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
-    print(f'31 materials + normal maps: disk {disk/1e6:.2f} MB; maximum resident texture payload {resident/1e6:.2f} MB')
+    print(f'39 materials + normal maps: disk {disk/1e6:.2f} MB; maximum resident texture payload {resident/1e6:.2f} MB')
 if __name__=='__main__':main()

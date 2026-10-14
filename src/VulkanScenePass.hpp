@@ -40,6 +40,7 @@ class VulkanScenePass {
     VkPipelineLayout layout_=VK_NULL_HANDLE;
     VkPipeline pipeline_=VK_NULL_HANDLE;
     VkPipeline skyPipeline_=VK_NULL_HANDLE,shadowPipeline_=VK_NULL_HANDLE;
+    VkPipeline spritePipeline_=VK_NULL_HANDLE,spriteShadowPipeline_=VK_NULL_HANDLE;
     VkPipeline uiPipeline_=VK_NULL_HANDLE;
     VkRenderPass shadowPass_=VK_NULL_HANDLE;
     VkFramebuffer shadowFramebuffer_=VK_NULL_HANDLE;
@@ -50,7 +51,11 @@ class VulkanScenePass {
     ImageResource materials_,normals_,shadow_,msaaColor_;
     HostBuffer normalStaging_;
     std::vector<VkBufferImageCopy> normalCopies_;
-    ImageResource glyphs_;
+    ImageResource glyphs_,sprites_;
+    HostBuffer spriteStaging_,spriteVertices_,spriteIndices_;
+    std::vector<VkBufferImageCopy> spriteCopies_;
+    VkSampler spriteSampler_=VK_NULL_HANDLE;
+    std::uint32_t spriteIndexCount_=0;std::uint64_t spriteBytes_=0;
     ImageResource macro_;
     HostBuffer macroStaging_;
     std::vector<VkBufferImageCopy> macroCopies_;
@@ -93,6 +98,7 @@ class VulkanScenePass {
                    std::uint32_t levels,std::uint32_t layers,VkSampleCountFlagBits samples,
                    VkImageUsageFlags usage,VkImageAspectFlags aspect,std::string& error);
     void destroyImage(ImageResource& image)noexcept;
+    bool makeSprites(std::string& error);
     bool makeMaterials(std::string& error);
     bool makeShadow(std::string& error);
     bool makeDescriptors(std::string& error);
@@ -114,7 +120,9 @@ public:
     void record(VkCommandBuffer command,std::uint32_t swapImage,const GpuFrameConstants& constants);
     std::uint32_t triangleCount()const noexcept{return indices_/3;}
     std::uint64_t residentBytes()const noexcept{return vertex_.allocationBytes+index_.allocationBytes+vertexDevice_.allocationBytes+indexDevice_.allocationBytes;}
-    std::uint64_t graphicsResidentBytes()const noexcept{return residentBytes()+materials_.allocationBytes+normals_.allocationBytes+normalStaging_.allocationBytes+shadow_.allocationBytes+msaaColor_.allocationBytes+depthAllocationBytes_+uniforms_.allocationBytes+textureStaging_.allocationBytes+glyphs_.allocationBytes+glyphStaging_.allocationBytes+uiVertices_.allocationBytes+uiIndices_.allocationBytes+macro_.allocationBytes+macroStaging_.allocationBytes;}
+    std::uint64_t graphicsResidentBytes()const noexcept{return residentBytes()+materials_.allocationBytes+sprites_.allocationBytes+spriteStaging_.allocationBytes+spriteVertices_.allocationBytes+spriteIndices_.allocationBytes+normals_.allocationBytes+normalStaging_.allocationBytes+shadow_.allocationBytes+msaaColor_.allocationBytes+depthAllocationBytes_+uniforms_.allocationBytes+textureStaging_.allocationBytes+glyphs_.allocationBytes+glyphStaging_.allocationBytes+uiVertices_.allocationBytes+uiIndices_.allocationBytes+macro_.allocationBytes+macroStaging_.allocationBytes;}
+    std::uint64_t spriteBytes()const noexcept{return spriteBytes_;}
+    std::uint32_t spriteCount()const noexcept{return spriteIndexCount_/6;}
     std::uint64_t interfaceBytes()const noexcept{return uiBytes_;}
     std::uint64_t macroBytes()const noexcept{return macroBytes_;}
     std::uint32_t macroResolution()const noexcept{return macroResolution_;}

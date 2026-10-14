@@ -449,6 +449,7 @@ public:
             telemetry_.materialTextureCount=nativeScene_.materialCount();
             telemetry_.shadowMapSize=nativeScene_.shadowMapSize();
             telemetry_.msaaSamples=nativeScene_.sampleCount();
+            telemetry_.spriteUploadedBytes+=nativeScene_.spriteBytes();telemetry_.spriteCount=nativeScene_.spriteCount();
             telemetry_.interfaceUploadedBytes+=nativeScene_.interfaceBytes();
             telemetry_.terrainTextureUploadedBytes+=nativeScene_.macroBytes();telemetry_.terrainTextureResolution=nativeScene_.macroResolution();
             telemetry_.uploadedBytes+=meshBytes;

@@ -5,7 +5,7 @@ import argparse, ctypes as C, json, os, signal, struct, subprocess, time
 from pathlib import Path
 p=argparse.ArgumentParser();p.add_argument('--exe',required=True);p.add_argument('--runner');p.add_argument('--runtime',required=True,type=Path);a=p.parse_args()
 x=C.CDLL('libX11.so.6');xt=C.CDLL('libXtst.so.6');P=C.c_void_p;W=C.c_ulong
-for name,args,ret in [('XOpenDisplay',[C.c_char_p],P),('XDefaultRootWindow',[P],W),('XQueryTree',[P,W,C.POINTER(W),C.POINTER(W),C.POINTER(C.POINTER(W)),C.POINTER(C.c_uint)],C.c_int),('XFetchName',[P,W,C.POINTER(C.c_char_p)],C.c_int),('XFree',[P],C.c_int),('XSetInputFocus',[P,W,C.c_int,W],C.c_int),('XStringToKeysym',[C.c_char_p],W),('XKeysymToKeycode',[P,W],C.c_uint),('XFlush',[P],C.c_int),('XCloseDisplay',[P],C.c_int)]:
+for name,args,ret in [('XOpenDisplay',[C.c_char_p],P),('XDefaultRootWindow',[P],W),('XQueryTree',[P,W,C.POINTER(W),C.POINTER(W),C.POINTER(C.POINTER(W)),C.POINTER(C.c_uint)],C.c_int),('XFetchName',[P,W,C.POINTER(C.c_char_p)],C.c_int),('XInternAtom',[P,C.c_char_p,C.c_int],W),('XGetWindowProperty',[P,W,W,C.c_long,C.c_long,C.c_int,W,C.POINTER(W),C.POINTER(C.c_int),C.POINTER(W),C.POINTER(W),C.POINTER(P)],C.c_int),('XFree',[P],C.c_int),('XSetInputFocus',[P,W,C.c_int,W],C.c_int),('XStringToKeysym',[C.c_char_p],W),('XKeysymToKeycode',[P,W],C.c_uint),('XFlush',[P],C.c_int),('XCloseDisplay',[P],C.c_int)]:
  f=getattr(x,name);f.argtypes=args;f.restype=ret
 for name,args in [('XTestFakeKeyEvent',[P,C.c_uint,C.c_int,W]),('XTestFakeButtonEvent',[P,C.c_uint,C.c_int,W]),('XTestFakeRelativeMotionEvent',[P,C.c_int,C.c_int,W])]:getattr(xt,name).argtypes=args
 
@@ -15,9 +15,13 @@ def windows(d,parent):
  result=[]
  for i in range(count.value):
   w=children[i];name=C.c_char_p();x.XFetchName(d,w,C.byref(name))
-  if name.value:
-   if b'GRAY ZONE' in name.value.upper():result.append(w)
-   x.XFree(C.cast(name,P))
+  title=name.value or b''
+  if name.value:x.XFree(C.cast(name,P))
+  if not title:
+   actual=W();fmt=C.c_int();items=W();remaining=W();data=P()
+   x.XGetWindowProperty(d,w,x.XInternAtom(d,b'_NET_WM_NAME',0),0,1024,0,0,C.byref(actual),C.byref(fmt),C.byref(items),C.byref(remaining),C.byref(data))
+   if data.value:title=C.string_at(data,items.value);x.XFree(data)
+  if b'GRAY ZONE' in title.upper():result.append(w)
   result.extend(windows(d,w))
  if children:x.XFree(children)
  return result

@@ -1,8 +1,10 @@
-# GRAY ZONE: 1989 — вихідний код v0.0.25
+# GRAY ZONE: 1989 — вихідний код v0.0.26
 
-Це **вихідний код**, а не Windows EXE. Початковий проєкт v0.0.22 модернізовано до v0.0.25: кешування GPU-геометрії, матеріали, освітлення й деталізовані моделі, native HUD, seed-рельєф і макротекстури, реальний час, перша особа, ручна стрільба та броня. Всередині повний `src/`, `include/`, `tests/`, `assets/` та CMake. Перевірки та межі наведено в [docs/GRAPHICS_RTX3050TI_UA.md](docs/GRAPHICS_RTX3050TI_UA.md).
+Це **вихідний код**, а не Windows EXE. Початковий проєкт v0.0.22 модернізовано до v0.0.26: кешування GPU-геометрії, матеріали, освітлення й деталізовані моделі, native HUD, seed-рельєф і макротекстури, реальний час, перша особа, ручна стрільба та броня, спрайти/прозорість, ефекти зброї та 4 рівні LOD. Всередині повний `src/`, `include/`, `tests/`, `assets/` та CMake. Перевірки та межі наведено в [docs/GRAPHICS_RTX3050TI_UA.md](docs/GRAPHICS_RTX3050TI_UA.md).
 
-Новий геймплей/керування/бюджети: [docs/GAMEPLAY_v025_UA.md](docs/GAMEPLAY_v025_UA.md).
+Спрайти, LOD та оцінка: [docs/SPRITES_LOD_v026_UA.md](docs/SPRITES_LOD_v026_UA.md).
+
+Геймплей/керування: [docs/GAMEPLAY_v025_UA.md](docs/GAMEPLAY_v025_UA.md).
 
 Попередній огляд: [docs/REVIEW_v024_UA.md](docs/REVIEW_v024_UA.md). Реалізований етап: [docs/UI_TERRAIN_v024_UA.md](docs/UI_TERRAIN_v024_UA.md).
 

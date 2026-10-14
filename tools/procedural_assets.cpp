@@ -16,7 +16,8 @@ int main(int argc,char** argv){try{
     const fs::path output=argc>1?argv[1]:"assets/models/procedural";fs::create_directories(output);
     std::size_t weapons=0,environment=0;
     for(unsigned i=0;i<unsigned(gz::Weapon::Count);++i){gz::SceneMesh model;gz::SceneMeshBuilder::addWeapon(model,gz::Weapon(i));weapons+=writeMesh(output/("weapon_"+std::to_string(i)+".gzw"),model);}
-    for(int i=0;i<16;++i){gz::SceneMesh model;gz::SceneMeshBuilder::addEnvironmentProp(model,i,1989+i);environment+=writeMesh(output/("environment_"+std::to_string(i)+".gzw"),model);}
+    for(int i=0;i<32;++i){gz::SceneMesh model;gz::SceneMeshBuilder::addEnvironmentProp(model,i,1989+i);environment+=writeMesh(output/("environment_"+std::to_string(i)+".gzw"),model);}
+    for(unsigned weapon=0;weapon<unsigned(gz::Weapon::Count);++weapon)for(int level=1;level<4;++level){gz::SceneMesh m;gz::SceneMeshBuilder::addWeapon(m,gz::Weapon(weapon),true,gz::ModelLod(level));weapons+=writeMesh(output/("weapon_"+std::to_string(weapon)+"_lod"+std::to_string(level)+".gzw"),m);}
     if(weapons>gz::kWeaponModelBudget||environment>gz::kEnvironmentBudget)throw std::runtime_error("Procedural model budget exceeded");
     std::ofstream manifest(output/"manifest.json");manifest<<"{\n  \"generator_version\": 1,\n  \"seed\": 1989,\n  \"weapon_model_bytes\": "<<weapons<<",\n  \"weapon_budget_bytes\": "<<gz::kWeaponModelBudget<<",\n  \"environment_model_bytes\": "<<environment<<",\n  \"environment_budget_bytes\": "<<gz::kEnvironmentBudget<<"\n}\n";
     std::cout<<"Procedural weapons: "<<weapons<<" bytes; environment catalogue: "<<environment<<" bytes\n";return 0;

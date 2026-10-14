@@ -1,5 +1,6 @@
 #include "gz/Renderer.hpp"
 #include "gz/SceneMesh.hpp"
+#include "gz/Sprites.hpp"
 #include "gz/LandscapeVisual.hpp"
 #include <algorithm>
 #include <array>
@@ -807,6 +808,7 @@ void Renderer::drawProps(const Camera& camera){
       }
     }
   }
+  if(!spriteAtlas_){
   const float windScale=atmosphereProfile(atmosphere_).windMultiplier;
   float treeCell=close?27.f:80.f;
   int minX=int(std::floor((camera.focusX-span)/treeCell)),maxX=int(std::ceil((camera.focusX+span)/treeCell));
@@ -853,6 +855,7 @@ void Renderer::drawProps(const Camera& camera){
     }
     ++drawn;
   }
+  }else{for(const auto& t:treeLayout(terrain_,camera)){if(atmosphere_.shadows)groundShadow(t.x,t.z,t.height,t.width,.85f);if(t.lod<ModelLod::Far)box({t.x,t.y+t.height*.38f,t.z},t.height*.045f,t.height*.76f,t.height*.045f,0x685542,TextureMaterial::PineBark);}}
   for(int bi=-6;bi<=6;++bi){
     float bx=3000.f+bi*36.f,bz=roadCenterHorizontal(bx)-24.f;
     if(std::abs(bx-camera.focusX)>span+40.f || std::abs(bz-camera.focusZ)>span+40.f)continue;
@@ -926,6 +929,25 @@ void Renderer::drawUnits(const Simulation& sim,const Camera& camera,int selected
     }
   }
 }
+void Renderer::drawSprites(const Simulation& sim,const Camera& camera){
+  if(!spriteAtlas_)return;
+  SpriteBatch batch;batch.build(terrain_,sim,camera,atmosphere_,visualTime_,0,effects_.wind);const auto mesh=batch.geometry();const auto* v=static_cast<const SpriteVertex*>(mesh.vertices);
+  const auto light=atmosphereProfile(atmosphere_);
+  for(std::size_t i=0;i+2<mesh.indexCount;i+=3){const auto& a=v[mesh.indices[i]];const auto& b=v[mesh.indices[i+1]];const auto& c=v[mesh.indices[i+2]];
+    const auto p=projection({a.x,a.y,a.z}),q=projection({b.x,b.y,b.z}),r=projection({c.x,c.y,c.z});if(!p.valid||!q.valid||!r.valid)continue;
+    const float den=(q.x-p.x)*(r.y-p.y)-(q.y-p.y)*(r.x-p.x);if(std::abs(den)<.01f)continue;const float inv=1/den;
+    const int x0=std::clamp(int(std::floor(std::min({p.x,q.x,r.x}))),0,w_),x1=std::clamp(int(std::ceil(std::max({p.x,q.x,r.x}))),0,w_),y0=std::clamp(int(std::floor(std::min({p.y,q.y,r.y}))),0,h_),y1=std::clamp(int(std::ceil(std::max({p.y,q.y,r.y}))),0,h_);
+    const auto kind=SpriteKind(unsigned(a.layer));const bool emissive=kind==SpriteKind::Muzzle||kind==SpriteKind::Spark||kind==SpriteKind::Fire;const float brightness=emissive?1.3f:std::clamp(light.ambient+light.direct*.45f,.18f,1.f);
+    for(int y=y0;y<y1;++y)for(int x=x0;x<x1;++x){float wb=((x+.5f-p.x)*(r.y-p.y)-(y+.5f-p.y)*(r.x-p.x))*inv,wc=((q.x-p.x)*(y+.5f-p.y)-(q.y-p.y)*(x+.5f-p.x))*inv,wa=1-wb-wc;if(wa<0||wb<0||wc<0)continue;
+      float reciprocal=wa/p.depth+wb/q.depth+wc/r.depth,depth=1/reciprocal;const auto index=std::size_t(y)*w_+x;if(reciprocal<depth_[index])continue;
+      float u=(a.u*wa/p.depth+b.u*wb/q.depth+c.u*wc/r.depth)*depth,t=(a.v*wa/p.depth+b.v*wb/q.depth+c.v*wc/r.depth)*depth;auto sample=spriteAtlas_->sample(kind,u,t);float alpha=sample[3]*a.a;
+      if(alpha<(unsigned(kind)<7||kind==SpriteKind::Leaf?.32f:.012f))continue;
+      const float fog=std::clamp((depth-light.fogNear)/std::max(1.f,light.fogFar-light.fogNear),0.f,kind==SpriteKind::Cloud?.3f:.9f);unsigned channels[3]{};const float tint[3]{a.r,a.g,a.b},haze[3]{light.fogR,light.fogG,light.fogB};
+      for(int channel=0;channel<3;++channel){float value=std::clamp(sample[channel]*tint[channel]*brightness,0.f,1.f)*(1-fog)+haze[channel]*fog;unsigned shift=(2-channel)*8;channels[channel]=unsigned(((color_[index]>>shift)&255)*(1-alpha)+value*255*alpha);}
+      color_[index]=(channels[0]<<16)|(channels[1]<<8)|channels[2];
+    }
+  }
+}
 void Renderer::drawGlobal(const Simulation& sim){
   // Reuse the same heightmap-derived Europe mesh as the main menu.
   // Loaded once and drawn to the actual software framebuffer every frame.
@@ -971,6 +993,7 @@ void Renderer::applyEdgeAA(){
   }
 }
 void Renderer::draw(const Simulation& sim,const Camera& camera,int selectedSquad){
+  if(!spriteTried_){spriteTried_=true;auto atlas=std::make_shared<SpriteAtlas>();if(atlas->load())spriteAtlas_=std::move(atlas);}
   if(color_.empty())resize(w_,h_);
   triangleCount_=0;
   if(sim.mode()==ViewMode::GlobalAI){drawGlobal(sim);return;}
@@ -989,8 +1012,9 @@ void Renderer::draw(const Simulation& sim,const Camera& camera,int selectedSquad
   drawEmissiveEffects();
   drawPrecipitation();
   if(effects_.antialiasing)applyEdgeAA();
+  drawSprites(sim,camera);
   if(camera.firstPerson&&!photoMode_){SceneMesh gun;SceneMeshBuilder::addViewWeapon(gun,sim,camera,terrain_.heightAt(camera.focusX,camera.focusZ));
-    std::fill(depth_.begin(),depth_.end(),10000.f);
+    std::fill(depth_.begin(),depth_.end(),0.f);
     for(std::size_t i=0;i+2<gun.indices.size();i+=3){auto a=gun.vertices[gun.indices[i]],b=gun.vertices[gun.indices[i+1]],c=gun.vertices[gun.indices[i+2]];triangle({a.x,a.y,a.z},{b.x,b.y,b.z},{c.x,c.y,c.z},0x9a9c89,Surface::Solid,TextureMaterial(int(a.material)));}
   }
 }

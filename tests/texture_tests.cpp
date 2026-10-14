@@ -26,6 +26,6 @@ int main(){
   std::size_t changed=0;
   for(std::size_t i=0;i<old.size();++i)if(old[i]!=renderer.data()[i])++changed;
   if(changed<200){std::cerr<<"Texture path is not visible: "<<changed<<" pixels\n";return 6;}
-  std::cout<<"TEXTURES OK: 31 materials at 3 selectable runtime sizes, "
+  std::cout<<"TEXTURES OK: 39 materials at 3 selectable runtime sizes, "
            <<renderer.textureMemoryBytes()/1024<<" KiB loaded, "<<changed<<" framebuffer pixels affected\n";
 }

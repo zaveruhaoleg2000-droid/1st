@@ -12,6 +12,7 @@
 #include "gz/Diagnostics.hpp"
 #include "gz/TacticalHud.hpp"
 #include "gz/PlayerController.hpp"
+#include "gz/Sprites.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -38,6 +39,7 @@ struct Game {
     gz::DebugHud debugHud;
     gz::TacticalHud tacticalHud;
     gz::TerrainAppearance terrainAppearance;
+    gz::SpriteBatch sprites;
     gz::TerrainWorld* nativeTerrain=nullptr;
     int gpuQuality=2;
     bool showDiagnostics=false;
@@ -333,6 +335,7 @@ int main(int argc,char**argv){
       submission.simulationTick=game.sim.stats().tick;submission.visualTimeSeconds=t;
       if(nativeTactical){
           game.terrainAppearance.update(gpuTerrain.generatorSettings(),game.camera.focusX,game.camera.focusZ,game.gpuQuality==2?4096:game.gpuQuality==1?2048:1024);
+          game.sprites.build(gpuTerrain,game.sim,game.camera,game.atmosphere,t,game.gpuQuality,game.render.effects().wind);submission.spriteMesh=game.sprites.geometry();
           submission.worldMesh=gz::makeGeometryView(gpuMesh);submission.terrainMacro=game.terrainAppearance.view();
           submission.camera=gz::makeGpuSceneCamera(game.camera,gpuTerrain.heightAt(game.camera.focusX,game.camera.focusZ),game.atmosphere,game.render.effects());
           if(!game.render.photoMode()){game.tacticalHud.build(game.sim,gpuTerrain,game.camera,game.campaign.active()?&game.campaign.state():nullptr,int(game.selected),w,h,game.paused,game.gpuQuality,game.terrainAppearance.loading());submission.interfaceMesh=game.tacticalHud.geometry();}

@@ -30,13 +30,6 @@ vec3 skyRadiance(vec3 ray){
     vec3 result=mix(horizon,pc.sky.rgb*(vec3(.48,.67,1.)),pow(elevation,.42));
     float sun=clamp(dot(ray,normalize(pc.sun.xyz)),0.,1.);
     result+=pc.sunColor.rgb*pc.time.w*(pow(sun,512.)*2.2+pow(sun,16.)*.22);
-    if(ray.y>.015){
-        vec2 cloudUV=ray.xz/(ray.y+.18)*2.4+vec2(pc.time.x*.005,pc.time.x*.002);
-        float clouds=smoothstep(.53-pc.effects.y*.22,.68-pc.effects.y*.18,fbm(cloudUV));
-        clouds*=smoothstep(.015,.2,ray.y);
-        vec3 cloudColor=mix(pc.sky.rgb*.65,vec3(.92,.91,.85),clamp(pc.sun.w+.25,0.,1.));
-        result=mix(result,cloudColor,clouds*pc.effects.y);
-    }
     return max(result,vec3(.003));
 }
 vec3 displayColor(vec3 hdr){
@@ -61,10 +54,10 @@ float visibility(vec3 N,vec3 L){
 float distribution(float NoH,float rough){float a=rough*rough,a2=a*a;float d=NoH*NoH*(a2-1.)+1.;return a2/max(3.14159*d*d,.00001);}
 float geometry(float NoV,float rough){float k=(rough+1.)*(rough+1.)*.125;return NoV/(NoV*(1.-k)+k);}
 void main(){
-    if(material==32){color=vec4(displayColor(vec3(6.,2.1,.22)),1.);return;}
+    if(material==64){color=vec4(displayColor(vec3(6.,2.1,.22)),1.);return;}
     vec3 V=normalize(pc.eye.xyz-worldPosition),N=normalize(worldNormal),L=normalize(pc.sun.xyz);
     if(dot(N,V)<0.)N=-N;
-    int layer=clamp(material,0,31);
+    int layer=clamp(material,0,39);
     vec3 albedo=texture(materials,vec3(uv,layer)).rgb;
     float macro=.88+.24*fbm(worldPosition.xz*.019);
     albedo*=macro;

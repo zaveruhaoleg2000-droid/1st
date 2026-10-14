@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <fstream>
 #include "gz/AssetBudgets.hpp"
+#include "gz/SceneLayout.hpp"
+#include "gz/NativeScene.hpp"
 namespace gz {
 namespace {
 constexpr float PI=3.14159265358979323846f;
@@ -104,14 +106,15 @@ void appendWeapon(SceneMesh& m,Weapon kind,bool detailed){
     }();
     const auto& source=catalog[std::size_t(kind)];const auto base=std::uint32_t(m.vertices.size());m.vertices.insert(m.vertices.end(),source.vertices.begin(),source.vertices.end());for(auto i:source.indices)m.indices.push_back(i+base);
 }
-void houseDetails(SceneMesh&,P,float,float,float,bool);
-void vehicleModel(SceneMesh&,P,float,int,bool);
+void houseDetails(SceneMesh&,P,float,float,float,bool,ModelLod lod=ModelLod::Near);
+void vehicleModel(SceneMesh&,P,float,int,bool,ModelLod lod=ModelLod::Near);
 void environmentProp(SceneMesh& m,int kind,std::uint32_t seed,bool detailed){
+    const int segments=detailed?16:6;
     const float variation=.85f+float(seed%31)/100.f;
-    switch(kind%16){
+    switch(kind%32){
     case 0:box(m,{0,.45f,0},.9f,.9f,.8f,TextureMaterial::Crate);if(detailed)for(float x:{-.42f,.42f})box(m,{x,.45f,0},.06f,.95f,.88f,TextureMaterial::WeaponMetal);break;
     case 1:cylinder(m,{0,0,0},{0,1.0f,0},.32f,TextureMaterial::Armor,detailed?20:8);for(float y:{.06f,.5f,.95f})cylinder(m,{0,y,0},{0,y+.03f,0},.34f,TextureMaterial::WeaponMetal,16);break;
-    case 2:for(int i=0;i<5;++i)ellipsoid(m,{(i%3-1)*.50f,.18f+(i/3)*.32f,0},.36f,.20f,.30f,TextureMaterial::Fabric,detailed?12:6,4);break;
+    case 2:for(int i=0;i<5;++i)ellipsoid(m,{(i%3-1)*.50f,.18f+(i/3)*.32f,0},.36f,.20f,.30f,TextureMaterial::Fabric,segments,4);break;
     case 3:ellipsoid(m,{0,.35f,0},.7f*variation,.45f,.58f,TextureMaterial::Stone,detailed?14:6,5);break;
     case 4:for(float x:{-1.6f,1.6f})box(m,{x,.8f,0},.10f,1.6f,.12f,TextureMaterial::Fence);for(float y:{.55f,1.18f})box(m,{0,y,0},3.4f,.14f,.11f,TextureMaterial::WoodPlanks);break;
     case 5:cylinder(m,{0,0,0},{0,5.5f,0},.06f,TextureMaterial::WeaponMetal,10);box(m,{.6f,5.3f,0},1.2f,.08f,.08f,TextureMaterial::WeaponMetal);box(m,{1.1f,5.2f,0},.38f,.12f,.18f,TextureMaterial::Glass);break;
@@ -120,14 +123,30 @@ void environmentProp(SceneMesh& m,int kind,std::uint32_t seed,bool detailed){
     case 8:box(m,{0,3,0},9,6,11,TextureMaterial::Brick);houseDetails(m,{0,0,0},9,11,6,detailed);break;
     case 9:box(m,{0,.8f,0},6,1.6f,4,TextureMaterial::Concrete);box(m,{0,2,0},6.5f,.5f,4.5f,TextureMaterial::Stone);break;
     case 10:case 11:case 12:vehicleModel(m,{0,0,0},0,(kind-10)%3,detailed);break;
-    case 13:SceneMeshBuilder::addTree(m,0,0,0,.8f,seed,detailed);break;
+    case 13:cylinder(m,{0,0,0},{0,5.5f,0},.12f,TextureMaterial::PineBark,segments);for(int i=0;i<5;++i)cylinder(m,{0,2+i*.4f,0},{std::cos(i*2.4f),3+i*.4f,std::sin(i*2.4f)},.04f,TextureMaterial::PineBark,6);break;
     case 14:ellipsoid(m,{0,.7f,0},1.1f,.8f,.9f,TextureMaterial::Leaves,detailed?14:6,5);break;
     case 15:for(float x:{-1.5f,1.5f})box(m,{x,1.25f,0},.16f,2.5f,.16f,TextureMaterial::Fence);for(int i=0;i<7;++i)box(m,{-1.3f+i*.44f,1.2f,0},.08f,2.2f,.08f,TextureMaterial::Fence);box(m,{0,2.1f,0},3,.08f,.08f,TextureMaterial::Fence);break;
+    case 16:box(m,{0,.25f,0},4.2f,.5f,5,TextureMaterial::WoodPlanks);addTri(m,{-2,0,-2.4f},{2,0,-2.4f},{0,2.5f,-2.4f},TextureMaterial::Fabric);addTri(m,{-2,0,-2.4f},{0,2.5f,-2.4f},{0,2.5f,2.4f},TextureMaterial::Fabric);addTri(m,{-2,0,-2.4f},{0,2.5f,2.4f},{-2,0,2.4f},TextureMaterial::Fabric);addTri(m,{2,0,-2.4f},{2,0,2.4f},{0,2.5f,2.4f},TextureMaterial::Fabric);addTri(m,{2,0,-2.4f},{0,2.5f,2.4f},{0,2.5f,-2.4f},TextureMaterial::Fabric);break;
+    case 17:cylinder(m,{0,0,0},{0,8,0},.04f,TextureMaterial::WeaponMetal,8);for(int i=0;i<5;++i)cylinder(m,{-.8f,3+i,0},{.8f,3+i,0},.02f,TextureMaterial::WeaponMetal,6);break;
+    case 18:cylinder(m,{0,0,0},{0,6.5f,0},.12f,TextureMaterial::PineBark,10);box(m,{0,6,0},2.4f,.12f,.15f,TextureMaterial::WoodPlanks);for(float x:{-.8f,.8f})cylinder(m,{x,6,0},{x,6.4f,0},.06f,TextureMaterial::CeramicTile,8);break;
+    case 19:for(int i=0;i<8;++i)box(m,{std::cos(i*2.4f),.3f+i*.06f,std::sin(i*2.4f)},.8f,.6f,.5f,TextureMaterial::Rubble);break;
+    case 20:box(m,{0,.9f,0},1.8f,.5f,3.5f,TextureMaterial::Armor);box(m,{0,1.5f,-.25f},1.6f,.6f,1.4f,TextureMaterial::Fabric);for(float x:{-.9f,.9f})for(float z:{-1.1f,1.1f})cylinder(m,{x-.15f,.45f,z},{x+.15f,.45f,z},.4f,TextureMaterial::Rubber,detailed?12:6);break;
+    case 21:box(m,{0,.65f,0},2.1f,.1f,.6f,TextureMaterial::WoodPlanks);box(m,{0,1.05f,-.25f},2.1f,.55f,.08f,TextureMaterial::WoodPlanks);for(float x:{-.8f,.8f})box(m,{x,.3f,0},.12f,.6f,.45f,TextureMaterial::WeaponMetal);break;
+    case 22:for(int i=0;i<10;++i)ellipsoid(m,{(i%5-2)*.65f,.2f+(i/5)*.35f,0},.38f,.20f,.30f,TextureMaterial::Fabric,8,4);break;
+    case 23:box(m,{0,1.25f,0},2.4f,2.5f,5.6f,TextureMaterial::Rust);for(int i=-4;i<5;++i)box(m,{1.21f,1.25f,i*.56f},.03f,2.5f,.025f,TextureMaterial::WeaponMetal);break;
+    case 24:for(float x:{-1.2f,1.2f})for(float z:{-1.2f,1.2f})box(m,{x,3,z},.18f,6,.18f,TextureMaterial::WoodPlanks);box(m,{0,5.5f,0},2.7f,.2f,2.7f,TextureMaterial::WoodPlanks);box(m,{0,7,0},3,.15f,3,TextureMaterial::RoofSlate);break;
+    case 25:box(m,{0,.8f,0},3.4f,1.6f,.4f,TextureMaterial::Brick);for(int i=0;i<5;++i)box(m,{-1.4f+i*.7f,1.7f,0},.4f,.22f,.4f,TextureMaterial::Rubble);break;
+    case 26:cylinder(m,{0,0,0},{0,.8f,0},.15f,TextureMaterial::Rust,12);cylinder(m,{-.3f,.5f,0},{.3f,.5f,0},.06f,TextureMaterial::WeaponMetal,8);break;
+    case 27:cylinder(m,{0,0,0},{0,1,0},.7f,TextureMaterial::Stone,16);cylinder(m,{0,1,0},{0,1.1f,0},.8f,TextureMaterial::Concrete,16);break;
+    case 28:box(m,{0,.7f,0},.18f,1.4f,.18f,TextureMaterial::Stone);box(m,{0,1.05f,0},.85f,.18f,.18f,TextureMaterial::Stone);break;
+    case 29:box(m,{0,1,0},.1f,2,.1f,TextureMaterial::Fence);box(m,{0,1.8f,0},1.1f,.5f,.09f,TextureMaterial::Plaster);break;
+    case 30:box(m,{0,.65f,0},3.2f,.2f,.16f,TextureMaterial::WoodPlanks);for(float x:{-1.25f,1.25f})box(m,{x,.35f,0},.16f,.7f,.6f,TextureMaterial::WeaponMetal);break;
+    case 31:for(int i=0;i<4;++i)box(m,{(i%2-.5f)*.75f,.45f,(i/2-.5f)*.75f},.7f,.8f,.7f,TextureMaterial::Crate);box(m,{0,.06f,0},1.7f,.12f,1.7f,TextureMaterial::WoodPlanks);break;
     }
 }
 void appendEnvironment(SceneMesh& m,int kind,std::uint32_t seed,bool detailed){
     if(!detailed){environmentProp(m,kind,seed,false);return;}
-    static const auto models=[](){std::array<SceneMesh,8> catalog;
+    static const auto models=[](){std::array<SceneMesh,32> catalog;
         for(std::size_t i=0;i<catalog.size();++i){auto& mesh=catalog[i];std::ifstream in("assets/models/procedural/environment_"+std::to_string(i)+".gzw",std::ios::binary);
             char magic[4]{};std::uint32_t h[3]{};in.read(magic,4);in.read(reinterpret_cast<char*>(h),sizeof(h));
             bool valid=in&&std::memcmp(magic,"GZWM",4)==0&&h[0]==1&&h[1]>0&&h[2]%3==0&&std::uint64_t(h[1])*sizeof(SceneVertex)+std::uint64_t(h[2])*4<kEnvironmentBudget/catalog.size();
@@ -139,20 +158,22 @@ void appendEnvironment(SceneMesh& m,int kind,std::uint32_t seed,bool detailed){
     }();
     const auto& source=models[std::size_t(kind)%models.size()];const auto base=std::uint32_t(m.vertices.size());m.vertices.insert(m.vertices.end(),source.vertices.begin(),source.vertices.end());for(auto i:source.indices)m.indices.push_back(i+base);
 }
-void soldierModel(SceneMesh& m,P position,float yaw,bool player,bool detailed,float stride,bool selected,Weapon weapon){
+void soldierModel(SceneMesh& m,P position,float yaw,bool player,ModelLod lod,float stride,bool selected,Weapon weapon){
+    const bool detailed=lod<ModelLod::Far,highest=lod==ModelLod::Near;const int segments=highest?8:4;
     const auto first=m.vertices.size();const auto cloth=native(player?NativeMaterial::PlayerUniform:NativeMaterial::OpponentUniform);
     const auto metal=native(NativeMaterial::Armor),rubber=native(NativeMaterial::Rubber);
-    if(detailed)ellipsoid(m,{0,1.17f,0},.25f,.36f,.16f,cloth,10,5);
+    if(lod==ModelLod::Silhouette){box(m,{0,1,0},.40f,1.4f,.26f,cloth);box(m,{0,1.75f,0},.28f,.28f,.28f,metal);transformModel(m,first,position,yaw);++m.soldierModelCount;return;}
+    if(detailed)ellipsoid(m,{0,1.17f,0},.25f,.36f,.16f,cloth,highest?10:6,highest?5:3);
     else box(m,{0,1.17f,0},.48f,.64f,.28f,cloth);
     box(m,{0,.87f,0},.36f,.23f,.27f,cloth);
     for(float side:{-.12f,.12f}){
         const float swing=side<0?stride:-stride;
         if(detailed){
-            cylinder(m,{side,.87f,0},{side,.48f,swing},.082f,cloth,8);
-            cylinder(m,{side,.48f,swing},{side,.12f,swing*.5f},.069f,cloth,8);
+            cylinder(m,{side,.87f,0},{side,.48f,swing},.082f,cloth,segments);
+            cylinder(m,{side,.48f,swing},{side,.12f,swing*.5f},.069f,cloth,segments);
             const float arm=side<0?-.29f:.29f;
-            cylinder(m,{arm,1.41f,0},{arm,1.12f,.17f},.071f,cloth,8);
-            cylinder(m,{arm,1.12f,.17f},{arm*.62f,1.18f,.37f},.055f,cloth,8);
+            cylinder(m,{arm,1.41f,0},{arm,1.12f,.17f},.071f,cloth,segments);
+            cylinder(m,{arm,1.12f,.17f},{arm*.62f,1.18f,.37f},.055f,cloth,segments);
             ellipsoid(m,{arm*.62f,1.18f,.38f},.060f,.055f,.077f,native(NativeMaterial::Skin),6,3);
         }else{
             box(m,{side,.44f,swing},.14f,.70f,.16f,cloth);
@@ -161,32 +182,35 @@ void soldierModel(SceneMesh& m,P position,float yaw,bool player,bool detailed,fl
         box(m,{side,.10f,swing*.5f+.045f},.18f,.18f,.30f,rubber);
     }
     if(detailed){
-        ellipsoid(m,{0,1.68f,0},.15f,.19f,.145f,native(NativeMaterial::Skin),10,5);
-        ellipsoid(m,{0,1.82f,0},.19f,.12f,.19f,metal,12,4);
+        ellipsoid(m,{0,1.68f,0},.15f,.19f,.145f,native(NativeMaterial::Skin),highest?10:6,highest?5:3);
+        ellipsoid(m,{0,1.82f,0},.19f,.12f,.19f,metal,highest?12:6,highest?4:3);
         cylinder(m,{0,1.45f,0},{0,1.56f,0},.068f,native(NativeMaterial::Skin),8);
-        for(float x:{-.052f,.052f})box(m,{x,1.72f,.14f},.025f,.014f,.012f,rubber);
+        if(highest)for(float x:{-.052f,.052f})box(m,{x,1.72f,.14f},.025f,.014f,.012f,rubber);
         box(m,{0,1.675f,.152f},.030f,.045f,.035f,native(NativeMaterial::Skin));
         box(m,{0,1.18f,-.23f},.36f,.47f,.18f,cloth); // pack
         box(m,{0,1.17f,.18f},.42f,.40f,.09f,metal);  // vest
         box(m,{-.085f,1.01f,.245f},.11f,.14f,.045f,cloth);box(m,{.085f,1.01f,.245f},.11f,.14f,.045f,cloth);
-        const auto weaponFirst=m.vertices.size();appendWeapon(m,weapon,true);transformModel(m,weaponFirst,{.17f,1.2f,.32f},0);
+        const auto weaponFirst=m.vertices.size();appendWeapon(m,weapon,highest);transformModel(m,weaponFirst,{.17f,1.2f,.32f},0);
         box(m,{-.32f,.89f,.12f},.10f,.12f,.13f,native(NativeMaterial::Skin));
-    }else{box(m,{0,1.69f,0},.31f,.35f,.29f,metal);const auto gun=m.vertices.size();weaponModel(m,weapon,false);transformModel(m,gun,{.15f,1.2f,.28f},0);}
+    }else{box(m,{0,1.69f,0},.31f,.35f,.29f,metal);const auto gun=m.vertices.size();SceneMeshBuilder::addWeapon(m,weapon,false,lod);transformModel(m,gun,{.15f,1.2f,.28f},0);}
     if(selected)box(m,{0,1.52f,.16f},.17f,.065f,.045f,TextureMaterial::Snow);
     transformModel(m,first,position,yaw);++m.soldierModelCount;
 }
-void vehicleModel(SceneMesh& m,P position,float yaw,int kind,bool detailed){
+void vehicleModel(SceneMesh& m,P position,float yaw,int kind,bool detailed,ModelLod lod){
+    if(!detailed&&lod==ModelLod::Near)lod=ModelLod::Far;const bool highest=lod==ModelLod::Near;
+    const int segments=lod==ModelLod::Near?16:lod==ModelLod::Medium?10:6;
     const auto first=m.vertices.size();const auto armor=native(NativeMaterial::Armor),rubber=native(NativeMaterial::Rubber),glass=native(NativeMaterial::Glass);
+    if(lod==ModelLod::Silhouette){box(m,{0,1.1f,0},2.7f,1.7f,6.1f,armor);box(m,{0,2.1f,.2f},1.9f,.5f,2.1f,armor);box(m,{0,2.2f,2.4f},.15f,.15f,2.4f,armor);transformModel(m,first,position,yaw);++m.vehicleModelCount;return;}
     if(kind==0){ // tracked tank: hull, turret, barrel, tracks and road wheels
         box(m,{0,1.20f,0},3.2f,1.15f,6.4f,armor);
         box(m,{0,1.95f,.1f},2.30f,.65f,2.65f,armor);
-        ellipsoid(m,{0,2.08f,.1f},1.22f,.48f,1.37f,armor,detailed?16:8,4);
-        cylinder(m,{0,2.18f,1.3f},{0,2.18f,5.1f},.095f,armor,detailed?12:6);
+        ellipsoid(m,{0,2.08f,.1f},1.22f,.48f,1.37f,armor,segments,4);
+        cylinder(m,{0,2.18f,1.3f},{0,2.18f,5.1f},.095f,armor,segments);
         for(float x:{-1.67f,1.67f}){
             box(m,{x,.56f,0},.51f,.89f,6.5f,rubber);
-            for(int i=0;i<(detailed?6:3);++i){float z=-2.65f+5.3f*i/float((detailed?6:3)-1);
-                cylinder(m,{x-.27f,.58f,z},{x+.27f,.58f,z},.37f,armor,detailed?12:6);}
-            if(detailed)for(int i=0;i<18;++i)box(m,{x,.14f,-3.06f+i*.36f},.56f,.09f,.24f,rubber);
+            for(int i=0;i<(highest?6:3);++i){float z=-2.65f+5.3f*i/float((highest?6:3)-1);
+                cylinder(m,{x-.27f,.58f,z},{x+.27f,.58f,z},.37f,armor,segments);}
+            if(highest)for(int i=0;i<18;++i)box(m,{x,.14f,-3.06f+i*.36f},.56f,.09f,.24f,rubber);
         }
         box(m,{.58f,2.49f,-.15f},.59f,.10f,.60f,armor);
         cylinder(m,{-.75f,2.4f,-.65f},{-.75f,3.85f,-.65f},.025f,armor,6);
@@ -196,7 +220,7 @@ void vehicleModel(SceneMesh& m,P position,float yaw,int kind,bool detailed){
         ellipsoid(m,{0,2.4f,.45f},.60f,.38f,.67f,armor,10,4);
         cylinder(m,{0,2.42f,.80f},{0,2.42f,2.3f},.055f,armor,8);
         for(float x:{-1.4f,1.4f})for(float z:{-2.25f,-.85f,.80f,2.25f}){
-            cylinder(m,{x-.20f,.60f,z},{x+.20f,.60f,z},.57f,rubber,detailed?14:8);
+            cylinder(m,{x-.20f,.60f,z},{x+.20f,.60f,z},.57f,rubber,segments);
             cylinder(m,{x-.22f,.60f,z},{x+.22f,.60f,z},.23f,armor,8);
         }
         box(m,{-.58f,2.01f,3.36f},.66f,.33f,.055f,glass);box(m,{.58f,2.01f,3.36f},.66f,.33f,.055f,glass);
@@ -206,21 +230,23 @@ void vehicleModel(SceneMesh& m,P position,float yaw,int kind,bool detailed){
         box(m,{0,1.85f,2.02f},2.35f,1.70f,1.95f,armor);
         box(m,{0,2.13f,3.01f},1.90f,.62f,.06f,glass);
         box(m,{0,1.70f,-.90f},2.34f,1.05f,3.66f,TextureMaterial::WoodPlanks);
-        for(float x:{-1.17f,1.17f})for(float z:{-2.1f,-.70f,2.2f})cylinder(m,{x-.18f,.58f,z},{x+.18f,.58f,z},.58f,rubber,detailed?14:8);
+        for(float x:{-1.17f,1.17f})for(float z:{-2.1f,-.70f,2.2f})cylinder(m,{x-.18f,.58f,z},{x+.18f,.58f,z},.58f,rubber,segments);
         if(detailed)for(float x:{-1.13f,1.13f})box(m,{x,2.22f,2.08f},.055f,.54f,1.3f,glass);
     }
     if(detailed){for(float x:{-.85f,.85f})box(m,{x,1.18f,kind==0?3.24f:3.40f},.27f,.16f,.10f,TextureMaterial::Snow);}
     transformModel(m,first,position,yaw);++m.vehicleModelCount;
 }
-void houseDetails(SceneMesh& m,P p,float width,float length,float height,bool detailed){
+void houseDetails(SceneMesh& m,P p,float width,float length,float height,bool detailed,ModelLod lod){
     const auto roof=native(NativeMaterial::Roof),glass=native(NativeMaterial::Glass);
     const float y=p.y+height,top=y+4.2f;
     const P a{p.x-width*.55f,y,p.z-length*.55f},b{p.x+width*.55f,y,p.z-length*.55f};
     const P c{p.x+width*.55f,y,p.z+length*.55f},d{p.x-width*.55f,y,p.z+length*.55f};
     const P e{p.x,top,a.z},f{p.x,top,d.z};
+    if(lod==ModelLod::Silhouette){addTri(m,a,d,b,roof);addTri(m,b,d,c,roof);return;}
     addTri(m,a,d,e,roof);addTri(m,d,f,e,roof);addTri(m,e,f,b,roof);addTri(m,f,c,b,roof);
     addTri(m,a,e,b,TextureMaterial::Brick);addTri(m,d,c,f,TextureMaterial::Brick);
     box(m,{p.x+width*.27f,y+3.1f,p.z+length*.17f},1.30f,4.2f,1.45f,TextureMaterial::Brick);
+    if(lod==ModelLod::Near){for(float x:{-width*.49f,width*.49f})box(m,{p.x+x,p.y+height*.5f,p.z},.13f,height,length,TextureMaterial::Plaster);}
     if(detailed){
         for(float dz:{-length*.502f,length*.502f})for(int i=-1;i<=1;++i){
             box(m,{p.x+i*width*.29f,p.y+height*.55f,p.z+dz},2.5f,2.5f,.17f,TextureMaterial::Concrete);
@@ -268,7 +294,13 @@ void SceneMeshBuilder::addTree(SceneMesh& m,float x,float y,float z,float scale,
     }
     ++m.treeCount;
 }
-void SceneMeshBuilder::addWeapon(SceneMesh& m,Weapon weapon,bool detailed){weaponModel(m,weapon,detailed);}
+void SceneMeshBuilder::addWeapon(SceneMesh& m,Weapon weapon,bool detailed,ModelLod lod){
+    if(lod==ModelLod::Silhouette){box(m,{0,0,.1f},.07f,.09f,.75f,TextureMaterial::WeaponMetal);return;}
+    if(lod==ModelLod::Far){box(m,{0,0,-.03f},.07f,.09f,.40f,TextureMaterial::WeaponMetal);box(m,{0,0,.30f},.025f,.025f,.30f,TextureMaterial::WeaponMetal);box(m,{0,-.10f,0},.05f,.16f,.06f,TextureMaterial::WeaponMetal);return;}
+    weaponModel(m,weapon,detailed&&lod==ModelLod::Near);
+}
+void SceneMeshBuilder::addSoldierForLod(SceneMesh& m,ModelLod lod){soldierModel(m,{0,0,0},0,true,lod,0,false,Weapon::Rifle);}
+void SceneMeshBuilder::addVehicleForLod(SceneMesh& m,int kind,ModelLod lod){vehicleModel(m,{0,0,0},0,kind,lod<ModelLod::Far,lod);}
 void SceneMeshBuilder::addEnvironmentProp(SceneMesh& m,int kind,std::uint32_t seed,bool detailed){environmentProp(m,kind,seed,detailed);}
 void SceneMeshBuilder::addViewWeapon(SceneMesh& m,const Simulation& sim,const Camera& c,float ground){
     if(!c.firstPerson||sim.soldier(sim.controlledSoldier()).health<=0)return;
@@ -299,7 +331,7 @@ void SceneMeshBuilder::build(SceneMesh& m,TerrainWorld& world,const Simulation& 
     Camera staticCamera=camera;const float snap=near?32.f:128.f;staticCamera.focusX=std::floor(camera.focusX/snap)*snap;staticCamera.focusZ=std::floor(camera.focusZ/snap)*snap;
     const bool changed=!cacheValid_ || cachedTerrain_!=&world || cachedTerrainRevision_!=world.contentRevision() ||
         cachedCamera_.focusX!=staticCamera.focusX || cachedCamera_.focusZ!=staticCamera.focusZ ||
-        (cachedCamera_.distance<160.f)!=near || (cachedCamera_.distance<650.f)!=(camera.distance<650.f) || previousExtent!=extent ||
+        modelLod(cachedCamera_.distance)!=modelLod(camera.distance) || (cachedCamera_.distance<160.f)!=near || (cachedCamera_.distance<650.f)!=(camera.distance<650.f) || previousExtent!=extent ||
         cachedAtmosphere_.time!=atmosphere.time || cachedAtmosphere_.weather!=atmosphere.weather || cachedAtmosphere_.shadows!=atmosphere.shadows;
     if(changed){
         buildStatic(staticCache_,world,staticCamera,atmosphere);
@@ -311,6 +343,11 @@ void SceneMeshBuilder::build(SceneMesh& m,TerrainWorld& world,const Simulation& 
     // Detailed units are rebuilt only when simulation/culling/model inputs change.
     // Compare exact field values rather than hashes or object padding.
     nextUnitState_.clear();
+    if(soldierLods_.size()!=sim.soldierCount())soldierLods_.assign(sim.soldierCount(),ModelLod::Near);
+    const auto eye=makeGpuFrameConstants(makeGpuSceneCamera(camera,world.heightAt(camera.focusX,camera.focusZ),atmosphere),1280,720,0);
+    for(std::size_t i=0;i<sim.soldierCount();++i){const auto& s=sim.soldier(i);float y=world.heightAt(s.x,s.z)+1;
+        float distance=std::sqrt((s.x-eye.eye[0])*(s.x-eye.eye[0])+(y-eye.eye[1])*(y-eye.eye[1])+(s.z-eye.eye[2])*(s.z-eye.eye[2]));soldierLods_[i]=stableModelLod(distance,soldierLods_[i]);nextUnitState_.push_back(std::uint64_t(soldierLods_[i]));}
+
     nextUnitState_.insert(nextUnitState_.end(),{staticRevision_,sim.ticks(),std::uint64_t(selectedSquad),
         std::uint64_t(near),std::uint64_t(camera.distance<250.f),std::uint64_t(camera.distance<650.f),
         std::uint64_t(sim.soldierCount()),std::uint64_t(sim.squadCount()),std::uint64_t(camera.firstPerson),std::uint64_t(sim.controlledSoldier()),
@@ -336,7 +373,7 @@ void SceneMeshBuilder::build(SceneMesh& m,TerrainWorld& world,const Simulation& 
                 const float yaw=squad.hasObjective?std::atan2(float(squad.objectiveX)-x,float(squad.objectiveZ)-z):(squad.side==Side::Player?0.f:PI);
                 const bool moving=squad.hasObjective&&!squad.holdPosition && std::hypot(float(squad.objectiveX)-x,float(squad.objectiveZ)-z)>1.f;
                 const float stride=moving?.10f*std::sin(float(sim.ticks())*.23f+float(i)*.73f):0.f;
-                soldierModel(units_,{x,y,z},yaw,squad.side==Side::Player,camera.distance<250.f,stride,soldier.squad==std::uint32_t(selectedSquad),soldier.weapon);
+                soldierModel(units_,{x,y,z},yaw,squad.side==Side::Player,soldierLods_[i],stride,soldier.squad==std::uint32_t(selectedSquad),soldier.weapon);
             }
         }else{
             for(std::size_t i=0;i<sim.squadCount();++i){
@@ -431,7 +468,7 @@ void SceneMeshBuilder::buildStatic(SceneMesh& m,TerrainWorld& world,const Camera
     const std::array<P,4> vehicles{{{3055.5f,0,1258.f},{3085.f,0,1258.f},{3100.f,0,1280.f},{2940.f,0,1290.f}}};
     for(std::size_t i=0;i<vehicles.size();++i){auto p=vehicles[i];
         if(std::abs(p.x-camera.focusX)>extent||std::abs(p.z-camera.focusZ)>extent)continue;
-        p.y=world.heightAt(p.x,p.z);vehicleModel(m,p,i==2?.45f:0.f,int(i%3),detailed);
+        p.y=world.heightAt(p.x,p.z);vehicleModel(m,p,i==2?.45f:0.f,int(i%3),detailed,modelLod(std::hypot(std::hypot(p.x-camera.focusX,p.z-camera.focusZ),camera.distance),2.f));
         if(atmosphere.shadows)casters.push_back({p.x,p.z,3.f,4.f,1.f});
     }
     {const float y=world.heightAt(3090.f,1334.f);box(m,{3090.f,y+.22f,1334.f},3.8f,.44f,3.8f,TextureMaterial::WoodPlanks);}
@@ -442,7 +479,7 @@ void SceneMeshBuilder::buildStatic(SceneMesh& m,TerrainWorld& world,const Camera
         if(std::abs(z-1200)<24.f||std::abs(x-3000)<25.f || std::abs(x-TerrainGenerator::riverCenter(z,world.generatorSettings()))<TerrainGenerator::riverWidth(z,world.generatorSettings())+14.f)continue;
         float y=world.heightAt(x,z),hh=6.f+hash(i+2,j+44)*10.f;
         box(m,{x,y+hh*.5f,z},19.f,hh,21.f,TextureMaterial::Brick);
-        houseDetails(m,{x,y,z},19.f,21.f,hh,detailed);
+        const auto lod=modelLod(std::hypot(std::hypot(x-camera.focusX,z-camera.focusZ),camera.distance),4.f);houseDetails(m,{x,y,z},19.f,21.f,hh,detailed&&lod<ModelLod::Far,lod);
         if(atmosphere.shadows)casters.push_back({x,z,hh,22.f,1.f});
     }
     for(int ix=int((camera.focusX-extent)/18);ix<=int((camera.focusX+extent)/18);++ix)for(int iz=int((camera.focusZ-extent)/18);iz<=int((camera.focusZ+extent)/18);++iz){
@@ -450,25 +487,12 @@ void SceneMeshBuilder::buildStatic(SceneMesh& m,TerrainWorld& world,const Camera
         const float x=(ix+.5f)*18,z=(iz+.5f)*18;
         if(std::abs(x-3000)<26||std::abs(z-1200-30*std::sin(x*.001f))<28||std::abs(x-TerrainGenerator::riverCenter(z,world.generatorSettings()))<TerrainGenerator::riverWidth(z,world.generatorSettings())+6)continue;
         if(!near&&std::hypot(x-camera.focusX,z-camera.focusZ)>450)continue;
-        const auto first=m.vertices.size();appendEnvironment(m,int(hash(ix,iz)*7.99f),std::uint32_t(ix*19+iz*7),detailed);transformModel(m,first,{x,world.heightAt(x,z),z},hash(ix+1,iz)*6.28f);
+        const auto first=m.vertices.size();appendEnvironment(m,int(hash(ix,iz)*31.99f),std::uint32_t(ix*19+iz*7),detailed);transformModel(m,first,{x,world.heightAt(x,z),z},hash(ix+1,iz)*6.28f);
     }
-    // World-space cell keys prevent trees moving as the camera pans.
-    const float spacing=near?25.f:76.f;
-    int minX=int(std::floor((camera.focusX-extent)/spacing)),maxX=int(std::ceil((camera.focusX+extent)/spacing));
-    int minZ=int(std::floor((camera.focusZ-extent)/spacing)),maxZ=int(std::ceil((camera.focusZ+extent)/spacing));
-    for(int i=minX;i<=maxX && m.treeCount<420u;++i)for(int j=minZ;j<=maxZ && m.treeCount<420u;++j){
-        if(hash(i+13,j+7)<.74f)continue;
-        float x=(i+.25f+hash(i,j)*.5f)*spacing,z=(j+.2f+hash(i+55,j)*.6f)*spacing;
-        if(std::abs(z-1200.f-30.f*std::sin(x*.001f))<32.f||std::abs(x-3000.f)<28.f)continue;
-        if(std::abs(x-TerrainGenerator::riverCenter(z,world.generatorSettings()))<TerrainGenerator::riverWidth(z,world.generatorSettings())+6.f)continue;
-        const int houseI=int(std::round((x-3000.f)/42.f)),houseJ=int(std::round((z-1220.f)/46.f));
-        if(houseI>=-10&&houseI<=10&&houseJ>=-6&&houseJ<=6 && hash(houseI+222,houseJ+400)>=.65f &&
-           std::abs(1220.f+houseJ*46.f-1200.f)>=24.f&&std::abs(houseI*42.f)>=25.f &&
-           std::abs(x-(3000.f+houseI*42.f))<13.f&&std::abs(z-(1220.f+houseJ*46.f))<14.f)continue;
-        auto seed=std::uint32_t((hash(i*3,j*17))*65535.f);
-        const float treeScale=near?.78f:1.2f;
-        addTree(m,x,world.heightAt(x,z),z,treeScale,seed,detailed);
-        if(atmosphere.shadows)casters.push_back({x,z,(9.f+float(seed%7u))*treeScale,near?3.7f:6.f,.85f});
+    for(const auto& t:treeLayout(world,camera)){
+        ++m.treeCount;
+        if(t.lod==ModelLod::Near||t.lod==ModelLod::Medium){cylinder(m,{t.x,t.y,t.z},{t.x,t.y+t.height*.76f,t.z},t.height*.022f,TextureMaterial::PineBark,t.lod==ModelLod::Near?12:6);}
+        if(atmosphere.shadows)casters.push_back({t.x,t.z,t.height,t.width,.85f});
     }
     // Shadows are a second batch, AFTER all opaque scene indices.
     // This keeps the main pass opaque and limits blend overdraw to small quads.

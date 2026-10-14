@@ -1,5 +1,6 @@
 #include "VulkanScenePass.hpp"
 #include "gz/TacticalHud.hpp"
+#include "gz/Sprites.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -174,6 +175,7 @@ bool VulkanScenePass::makePipeline(std::string& error){
     };
     auto make=[&](const char* prefix,VkRenderPass pass,VkPipeline& out,bool shadow,bool sky){
         const bool ui=std::strcmp(prefix,"native_ui")==0;
+        const bool sprite=std::strncmp(prefix,"native_sprite",13)==0;
         const auto vs=makeShader(device_,load((std::string(prefix)+".vert").c_str()));
         const auto fs=makeShader(device_,load((std::string(prefix)+".frag").c_str()));
         if(!vs||!fs){if(vs)vkDestroyShaderModule(device_,vs,nullptr);if(fs)vkDestroyShaderModule(device_,fs,nullptr);
@@ -182,7 +184,7 @@ bool VulkanScenePass::makePipeline(std::string& error){
         stages[0].sType=stages[1].sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stages[0].stage=VK_SHADER_STAGE_VERTEX_BIT;stages[0].module=vs;stages[0].pName="main";
         stages[1].stage=VK_SHADER_STAGE_FRAGMENT_BIT;stages[1].module=fs;stages[1].pName="main";
-        VkVertexInputBindingDescription binding{0,std::uint32_t(ui?sizeof(HudVertex):sizeof(SceneVertex)),VK_VERTEX_INPUT_RATE_VERTEX};
+        VkVertexInputBindingDescription binding{0,std::uint32_t(ui?sizeof(HudVertex):sprite?sizeof(SpriteVertex):sizeof(SceneVertex)),VK_VERTEX_INPUT_RATE_VERTEX};
         const std::array<VkVertexInputAttributeDescription,6> attributes{{
             {0,0,VK_FORMAT_R32G32B32_SFLOAT,std::uint32_t(offsetof(SceneVertex,x))},
             {1,0,VK_FORMAT_R32G32B32_SFLOAT,std::uint32_t(offsetof(SceneVertex,nx))},
@@ -193,9 +195,11 @@ bool VulkanScenePass::makePipeline(std::string& error){
         }};
         const std::array<VkVertexInputAttributeDescription,3> uiAttributes{{
             {0,0,VK_FORMAT_R32G32_SFLOAT,0},{1,0,VK_FORMAT_R32G32_SFLOAT,8},{2,0,VK_FORMAT_R32G32B32A32_SFLOAT,16}}};
+        const std::array<VkVertexInputAttributeDescription,4> spriteAttributes{{
+            {0,0,VK_FORMAT_R32G32B32_SFLOAT,0},{1,0,VK_FORMAT_R32G32_SFLOAT,12},{2,0,VK_FORMAT_R32G32B32A32_SFLOAT,20},{3,0,VK_FORMAT_R32_SFLOAT,36}}};
         VkPipelineVertexInputStateCreateInfo input{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
         if(!sky){input.vertexBindingDescriptionCount=1;input.pVertexBindingDescriptions=&binding;
-            input.vertexAttributeDescriptionCount=ui?3:std::uint32_t(attributes.size());input.pVertexAttributeDescriptions=ui?uiAttributes.data():attributes.data();}
+            input.vertexAttributeDescriptionCount=ui?3:sprite?4:std::uint32_t(attributes.size());input.pVertexAttributeDescriptions=ui?uiAttributes.data():sprite?spriteAttributes.data():attributes.data();}
         VkPipelineInputAssemblyStateCreateInfo assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
         assembly.topology=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         const VkExtent2D size=shadow?VkExtent2D{shadowSize_,shadowSize_}:extent_;
@@ -208,9 +212,9 @@ bool VulkanScenePass::makePipeline(std::string& error){
         VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
         multisample.rasterizationSamples=shadow?VK_SAMPLE_COUNT_1_BIT:samples_;
         VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-        depth.depthTestEnable=depth.depthWriteEnable=(sky||ui)?VK_FALSE:VK_TRUE;depth.depthCompareOp=VK_COMPARE_OP_LESS_OR_EQUAL;
+        depth.depthTestEnable=(sky||ui)?VK_FALSE:VK_TRUE;depth.depthWriteEnable=(sky||ui||(sprite&&!shadow))?VK_FALSE:VK_TRUE;depth.depthCompareOp=VK_COMPARE_OP_LESS_OR_EQUAL;
         VkPipelineColorBlendAttachmentState blend{};blend.colorWriteMask=15;
-        if(ui){blend.blendEnable=VK_TRUE;blend.srcColorBlendFactor=VK_BLEND_FACTOR_SRC_ALPHA;blend.dstColorBlendFactor=VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        if(ui||(sprite&&!shadow)){blend.blendEnable=VK_TRUE;blend.srcColorBlendFactor=VK_BLEND_FACTOR_SRC_ALPHA;blend.dstColorBlendFactor=VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
             blend.colorBlendOp=VK_BLEND_OP_ADD;blend.srcAlphaBlendFactor=VK_BLEND_FACTOR_ONE;blend.dstAlphaBlendFactor=VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;blend.alphaBlendOp=VK_BLEND_OP_ADD;}
         VkPipelineColorBlendStateCreateInfo blendState{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
         blendState.attachmentCount=shadow?0:1;blendState.pAttachments=shadow?nullptr:&blend;
@@ -223,7 +227,7 @@ bool VulkanScenePass::makePipeline(std::string& error){
         if(result!=VK_SUCCESS){error=std::string("Native graphics pipeline failed: ")+prefix;return false;}return true;
     };
     return make("native_scene",pass_,pipeline_,false,false) && make("native_sky",pass_,skyPipeline_,false,true) &&
-        make("native_shadow",shadowPass_,shadowPipeline_,true,false) && make("native_ui",pass_,uiPipeline_,false,false);
+        make("native_shadow",shadowPass_,shadowPipeline_,true,false) && make("native_ui",pass_,uiPipeline_,false,false)&&make("native_sprite",pass_,spritePipeline_,false,false)&&make("native_sprite_shadow",shadowPass_,spriteShadowPipeline_,true,false);
 }
 void VulkanScenePass::destroySwapchain()noexcept{
     if(device_){
@@ -246,6 +250,9 @@ void VulkanScenePass::destroySwapchain()noexcept{
         for(auto view:colorViews_)vkDestroyImageView(device_,view,nullptr);
     }
     destroyImage(macro_);destroyBuffer(macroStaging_);macroCopies_.clear();macroPending_=false;macroRevision_=0;macroResolution_=0;
+    if(spritePipeline_)vkDestroyPipeline(device_,spritePipeline_,nullptr);if(spriteShadowPipeline_)vkDestroyPipeline(device_,spriteShadowPipeline_,nullptr);spritePipeline_=spriteShadowPipeline_=VK_NULL_HANDLE;
+    destroyImage(sprites_);destroyBuffer(spriteStaging_);destroyBuffer(spriteVertices_);destroyBuffer(spriteIndices_);spriteCopies_.clear();spriteIndexCount_=0;
+    if(spriteSampler_)vkDestroySampler(device_,spriteSampler_,nullptr);spriteSampler_=VK_NULL_HANDLE;
     if(glyphSampler_)vkDestroySampler(device_,glyphSampler_,nullptr);glyphSampler_=VK_NULL_HANDLE;
     destroyImage(glyphs_);destroyBuffer(glyphStaging_);destroyBuffer(uiVertices_);destroyBuffer(uiIndices_);uiIndexCount_=0;uiPipeline_=VK_NULL_HANDLE;
     destroyImage(normals_);destroyBuffer(normalStaging_);normalCopies_.clear();destroyImage(materials_);destroyImage(shadow_);destroyImage(msaaColor_);
@@ -275,7 +282,7 @@ bool VulkanScenePass::initialize(VkPhysicalDevice physical,VkDevice device,VkFor
     const bool medium=quality&&std::strcmp(quality,"medium")==0;
     samples_=!low&&(supported&VK_SAMPLE_COUNT_4_BIT)?VK_SAMPLE_COUNT_4_BIT:VK_SAMPLE_COUNT_1_BIT;
     shadowSize_=low?512u:(medium?1024u:2048u);
-    if(!makeDepth(error)||!makeRenderPass(error)||!makeMaterials(error)||!makeShadow(error)||!makeInterface(error)||!prepareMacro({},error)||!makeDescriptors(error) ||
+    if(!makeDepth(error)||!makeRenderPass(error)||!makeMaterials(error)||!makeShadow(error)||!makeInterface(error)||!makeSprites(error)||!prepareMacro({},error)||!makeDescriptors(error) ||
        (samples_!=VK_SAMPLE_COUNT_1_BIT&&!makeImage(msaaColor_,colorFormat_,extent.width,extent.height,1,1,samples_,
           VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,VK_IMAGE_ASPECT_COLOR_BIT,error))||!makePipeline(error)){
         destroySwapchain();return false;
@@ -308,6 +315,7 @@ bool VulkanScenePass::upload(const RenderSubmission& submission,const GpuFrameCo
     // The preceding submit fence has completed before upload() is called.
     if(!texturesPending_ && normalStaging_.buffer)destroyBuffer(normalStaging_);
     if(!texturesPending_ && textureStaging_.buffer)destroyBuffer(textureStaging_);
+    if(!texturesPending_ && spriteStaging_.buffer)destroyBuffer(spriteStaging_);
     if(!texturesPending_ && glyphStaging_.buffer)destroyBuffer(glyphStaging_);
     if(!macroPending_&&macroStaging_.buffer)destroyBuffer(macroStaging_);
     if(!prepareMacro(submission.terrainMacro,error))return false;
@@ -321,6 +329,15 @@ bool VulkanScenePass::upload(const RenderSubmission& submission,const GpuFrameCo
         for(const auto* buffer:{&uiVertices_,&uiIndices_})if(!buffer->coherent){VkMappedMemoryRange flush{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};flush.memory=buffer->memory;flush.size=VK_WHOLE_SIZE;
             if(vkFlushMappedMemoryRanges(device_,1,&flush)!=VK_SUCCESS){error="Interface memory flush failed";return false;}}
         uiIndexCount_=std::uint32_t(ui.indexCount);uiBytes_=ui.vertexBytes+ui.indexCount*4;
+    }
+    spriteBytes_=0;spriteIndexCount_=0;const auto& sprites=submission.spriteMesh;
+    if(sprites.vertexBytes||sprites.indexCount){
+        if(!sprites.valid()||sprites.strideBytes!=sizeof(SpriteVertex)||sprites.vertexBytes+sprites.indexCount*4>4u*1024u*1024u){error="Sprite geometry invalid or over budget";return false;}
+        for(std::size_t i=0;i<sprites.indexCount;++i)if(sprites.indices[i]>=sprites.vertexBytes/sprites.strideBytes){error="Sprite index outside vertices";return false;}
+        if(!makeBuffer(spriteVertices_,sprites.vertexBytes,VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,error)||!makeBuffer(spriteIndices_,sprites.indexCount*4,VK_BUFFER_USAGE_INDEX_BUFFER_BIT,error))return false;
+        std::memcpy(spriteVertices_.mapped,sprites.vertices,sprites.vertexBytes);std::memcpy(spriteIndices_.mapped,sprites.indices,sprites.indexCount*4);
+        for(const auto* b:{&spriteVertices_,&spriteIndices_})if(!b->coherent){VkMappedMemoryRange f{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};f.memory=b->memory;f.size=VK_WHOLE_SIZE;if(vkFlushMappedMemoryRanges(device_,1,&f)!=VK_SUCCESS)return false;}
+        spriteIndexCount_=std::uint32_t(sprites.indexCount);spriteBytes_=sprites.vertexBytes+sprites.indexCount*4;
     }
     const std::size_t ib=mesh.indexCount*sizeof(std::uint32_t);
     if(mesh.vertexBytes>budget_/2 || ib>budget_/2-mesh.vertexBytes){
@@ -402,6 +419,7 @@ void VulkanScenePass::record(VkCommandBuffer cmd,std::uint32_t image,const GpuFr
     shadowPass.clearValueCount=1;shadowPass.pClearValues=&shadowClear;
     vkCmdBeginRenderPass(cmd,&shadowPass,VK_SUBPASS_CONTENTS_INLINE);
     if(constants.sunColor[3]>.001f){vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,shadowPipeline_);vkCmdDrawIndexed(cmd,indices_,1,0,0,0);}
+    if(spriteIndexCount_&&constants.sunColor[3]>.001f){vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,spriteShadowPipeline_);vkCmdBindVertexBuffers(cmd,0,1,&spriteVertices_.buffer,&offset);vkCmdBindIndexBuffer(cmd,spriteIndices_.buffer,0,VK_INDEX_TYPE_UINT32);vkCmdDrawIndexed(cmd,spriteIndexCount_,1,0,0,0);}
     vkCmdEndRenderPass(cmd);
     std::array<VkClearValue,2> clear{};
     clear[0].color={{.35f,.45f,.50f,1.f}};
@@ -411,8 +429,10 @@ void VulkanScenePass::record(VkCommandBuffer cmd,std::uint32_t image,const GpuFr
     rp.clearValueCount=std::uint32_t(clear.size());rp.pClearValues=clear.data();
     vkCmdBeginRenderPass(cmd,&rp,VK_SUBPASS_CONTENTS_INLINE);
     vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,skyPipeline_);vkCmdDraw(cmd,3,1,0,0);
+    vkCmdBindVertexBuffers(cmd,0,1,&vertexDevice_.buffer,&offset);vkCmdBindIndexBuffer(cmd,indexDevice_.buffer,0,VK_INDEX_TYPE_UINT32);
     vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,pipeline_);
     vkCmdDrawIndexed(cmd,indices_,1,0,0,0);
+    if(spriteIndexCount_){vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,spritePipeline_);vkCmdBindVertexBuffers(cmd,0,1,&spriteVertices_.buffer,&offset);vkCmdBindIndexBuffer(cmd,spriteIndices_.buffer,0,VK_INDEX_TYPE_UINT32);vkCmdDrawIndexed(cmd,spriteIndexCount_,1,0,0,0);}
     if(uiIndexCount_){vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,uiPipeline_);
         vkCmdBindVertexBuffers(cmd,0,1,&uiVertices_.buffer,&offset);vkCmdBindIndexBuffer(cmd,uiIndices_.buffer,0,VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(cmd,uiIndexCount_,1,0,0,0);}

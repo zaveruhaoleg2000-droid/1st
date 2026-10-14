@@ -8,7 +8,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
 SHADERS = ('native_scene.vert', 'native_scene.frag', 'native_shadow.vert',
-           'native_shadow.frag', 'native_sky.vert', 'native_sky.frag', 'native_ui.vert', 'native_ui.frag')
+           'native_shadow.frag', 'native_sky.vert', 'native_sky.frag', 'native_ui.vert', 'native_ui.frag', 'native_sprite.vert', 'native_sprite.frag', 'native_sprite_shadow.vert', 'native_sprite_shadow.frag')
 
 
 def executable(build, name):
@@ -55,10 +55,10 @@ def main():
     }.items():
         (dest / filename).write_bytes(('@echo off\r\ncd /d "%~dp0"\r\n' + command + '\r\n').encode('ascii'))
     shutil.copy2(ROOT / 'README_UA.md', dest / 'README_GAME_UA.md')
-    for document in ('GPU_OPTIMIZATION_UA.md', 'GRAPHICS_RTX3050TI_UA.md', 'UI_TERRAIN_v024_UA.md', 'GAMEPLAY_v025_UA.md'):
+    for document in ('GPU_OPTIMIZATION_UA.md', 'GRAPHICS_RTX3050TI_UA.md', 'UI_TERRAIN_v024_UA.md', 'GAMEPLAY_v025_UA.md', 'SPRITES_LOD_v026_UA.md'):
         if (ROOT / 'docs' / document).is_file():
             shutil.copy2(ROOT / 'docs' / document, dest / document)
-    (dest / 'README_UA.txt').write_text('''GRAY ZONE: 1989 — v0.0.25, Windows x64
+    (dest / 'README_UA.txt').write_text('''GRAY ZONE: 1989 — v0.0.26, Windows x64
 
 Повністю розпакуйте архів. Запуск: PLAY.bat або PLAY_HIGH.bat.
 Для RTX 3050 Ti 4 ГБ почніть із високої якості. Якщо гра працює повільно,
@@ -80,13 +80,14 @@ VERIFY_GPU.bat перевіряє native Vulkan без дозволу на CPU f
 і записує gpu_smoke_test.log; graphics_backend.log містить стан рендерера.
 GPU_PROBE.bat перевіряє тільки loader/драйвер.
 
-v0.0.25: реальний час з паузою; новий HUD та пропорційний шрифт.
+v0.0.26: реальний час з паузою; новий HUD та пропорційний шрифт.
 1 тактика, 2 перша особа, 3 мапа. Space пауза.
 FPS: WASD рух, Shift біг, Ctrl присісти, ЛКМ вогонь, ПКМ приціл,
 R перезарядка, F пістолет/основна зброя, Tab наступний боєць, Esc тактика.
 Камера: середня кнопка + рух миші — обертання/нахил; колесо масштаб.
-31 процедурний матеріал із normal maps. Macro 2048/1024/512 за якістю.
-Нові можливості й обмеження: GAMEPLAY_v025_UA.md.
+39 процедурних матеріалів із normal maps, 16 RGBA шарів. Macro 2048/1024/512 за якістю.
+Спрайти/LOD/бюджети: SPRITES_LOD_v026_UA.md.
+Керування й бій: GAMEPLAY_v025_UA.md.
 Seed-рельєф попереднього етапу: UI_TERRAIN_v024_UA.md.
 Попередня графічна база: GRAPHICS_RTX3050TI_UA.md.
 У цьому середовищі немає фізичної RTX 3050 Ti чи Windows 11;
@@ -101,7 +102,7 @@ Seed-рельєф попереднього етапу: UI_TERRAIN_v024_UA.md.
     evidence.mkdir()
     if args.evidence_dir:
         for source in args.evidence_dir.glob('*.log'):
-            if not source.name.startswith(('graphics-', 'v024-', 'v025-')):
+            if not source.name.startswith(('graphics-', 'v024-', 'v025-', 'v026-')):
                 continue
             if 'tests' in source.name or 'gallery' in source.name or 'smoke' in source.name:
                 shutil.copy2(source, evidence / source.name)

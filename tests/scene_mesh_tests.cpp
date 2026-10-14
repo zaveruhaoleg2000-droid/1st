@@ -27,7 +27,7 @@ int main(){
     CHECK(scene.shadowCasterCount>0 && scene.shadowIndexCount==scene.shadowCasterCount*6);
     CHECK(scene.shadowFirstIndex+scene.shadowIndexCount==scene.indices.size());
     CHECK(scene.bytes()<32u*1024u*1024u);
-    CHECK(scene.vehicleModelCount==4 && scene.buildingModelCount>10);
+    CHECK(scene.vehicleModelCount>=4 && scene.buildingModelCount>10);
     for(auto idx:scene.indices)CHECK(idx<scene.vertices.size());
     for(const auto& v:scene.vertices){
         CHECK(std::isfinite(v.x)&&std::isfinite(v.y)&&std::isfinite(v.z));

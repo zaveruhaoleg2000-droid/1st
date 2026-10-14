@@ -1,5 +1,6 @@
 #include "VulkanScenePass.hpp"
 #include "gz/Textures.hpp"
+#include "gz/Sprites.hpp"
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -110,6 +111,23 @@ bool VulkanScenePass::makeMaterials(std::string& error){
     if(!normalStaging_.coherent){VkMappedMemoryRange flush{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};flush.memory=normalStaging_.memory;flush.size=VK_WHOLE_SIZE;if(vkFlushMappedMemoryRanges(device_,1,&flush)!=VK_SUCCESS)return false;}
     texturesPending_=true;return true;
 }
+bool VulkanScenePass::makeSprites(std::string& error){
+    SpriteAtlas atlas;if(!atlas.load()){error="Procedural RGBA sprite atlas missing";return false;}
+    std::vector<std::uint8_t> upload;spriteCopies_.clear();
+    for(unsigned layer=0;layer<atlas.layers;++layer){std::vector<std::uint8_t> pixels(atlas.pixels.begin()+layer*256*256*4,atlas.pixels.begin()+(layer+1)*256*256*4);unsigned side=256;
+        for(unsigned level=0;level<9;++level){VkBufferImageCopy copy{};copy.bufferOffset=upload.size();copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,level,layer,1};copy.imageExtent={side,side,1};spriteCopies_.push_back(copy);upload.insert(upload.end(),pixels.begin(),pixels.end());
+            if(side==1)break;unsigned small=side/2;std::vector<std::uint8_t> next(small*small*4);
+            for(unsigned y=0;y<small;++y)for(unsigned x=0;x<small;++x){float colors[3]{},alpha=0;
+                for(unsigned oy=0;oy<2;++oy)for(unsigned ox=0;ox<2;++ox){auto i=((2*y+oy)*side+2*x+ox)*4;float a=pixels[i+3]/255.f;alpha+=a;for(unsigned c=0;c<3;++c){float v=pixels[i+c]/255.f;colors[c]+=(v<=.04045f?v/12.92f:std::pow((v+.055f)/1.055f,2.4f))*a;}}
+                for(unsigned c=0;c<3;++c){float v=alpha>0?colors[c]/alpha:0;next[(y*small+x)*4+c]=std::uint8_t(std::clamp((v<=.0031308f?v*12.92f:1.055f*std::pow(v,1/2.4f)-.055f)*255,0.f,255.f));}next[(y*small+x)*4+3]=std::uint8_t(alpha*.25f*255);}
+            pixels=std::move(next);side=small;
+        }
+    }
+    if(!makeImage(sprites_,VK_FORMAT_R8G8B8A8_SRGB,256,256,9,atlas.layers,VK_SAMPLE_COUNT_1_BIT,VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT,VK_IMAGE_ASPECT_COLOR_BIT,error)||!makeBuffer(spriteStaging_,upload.size(),VK_BUFFER_USAGE_TRANSFER_SRC_BIT,error))return false;
+    std::memcpy(spriteStaging_.mapped,upload.data(),upload.size());if(!spriteStaging_.coherent){VkMappedMemoryRange f{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};f.memory=spriteStaging_.memory;f.size=VK_WHOLE_SIZE;if(vkFlushMappedMemoryRanges(device_,1,&f)!=VK_SUCCESS)return false;}
+    VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};sampler.magFilter=sampler.minFilter=VK_FILTER_LINEAR;sampler.mipmapMode=VK_SAMPLER_MIPMAP_MODE_LINEAR;sampler.maxLod=8;sampler.addressModeU=sampler.addressModeV=sampler.addressModeW=VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    if(vkCreateSampler(device_,&sampler,nullptr,&spriteSampler_)!=VK_SUCCESS){error="Sprite sampler creation failed";return false;}return true;
+}
 bool VulkanScenePass::makeShadow(std::string& error){
     VkFormat shadowFormat=VK_FORMAT_UNDEFINED;
     for(const auto candidate:{VK_FORMAT_D32_SFLOAT,VK_FORMAT_D16_UNORM}){
@@ -204,38 +222,40 @@ void VulkanScenePass::recordMacro(VkCommandBuffer cmd){
 }
 bool VulkanScenePass::makeDescriptors(std::string& error){
     if(!makeBuffer(uniforms_,sizeof(GpuFrameConstants),VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,error))return false;
-    const std::array<VkDescriptorSetLayoutBinding,6> bindings{{
+    const std::array<VkDescriptorSetLayoutBinding,7> bindings{{
         {0,VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1,VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},
         {1,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},
         {2,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},
         {3,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},
         {4,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},
-        {5,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr}
+        {5,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},
+        {6,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr}
     }};
     VkDescriptorSetLayoutCreateInfo layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    layout.bindingCount=6;layout.pBindings=bindings.data();
+    layout.bindingCount=7;layout.pBindings=bindings.data();
     if(vkCreateDescriptorSetLayout(device_,&layout,nullptr,&descriptorLayout_)!=VK_SUCCESS){error="Native descriptor layout creation failed";return false;}
-    const std::array<VkDescriptorPoolSize,2> sizes{{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1},{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,5}}};
+    const std::array<VkDescriptorPoolSize,2> sizes{{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1},{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,6}}};
     VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};pool.maxSets=1;pool.poolSizeCount=2;pool.pPoolSizes=sizes.data();
     if(vkCreateDescriptorPool(device_,&pool,nullptr,&descriptorPool_)!=VK_SUCCESS){error="Native descriptor pool creation failed";return false;}
     VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
     allocation.descriptorPool=descriptorPool_;allocation.descriptorSetCount=1;allocation.pSetLayouts=&descriptorLayout_;
     if(vkAllocateDescriptorSets(device_,&allocation,&descriptor_)!=VK_SUCCESS){error="Native descriptor allocation failed";return false;}
     VkDescriptorBufferInfo buffer{uniforms_.buffer,0,sizeof(GpuFrameConstants)};
-    const std::array<VkDescriptorImageInfo,5> images{{
+    const std::array<VkDescriptorImageInfo,6> images{{
         {materialSampler_,materials_.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
         {shadowSampler_,shadow_.view,VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL},
         {glyphSampler_,glyphs_.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
         {materialSampler_,macro_.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-        {materialSampler_,normals_.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}
+        {materialSampler_,normals_.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+        {spriteSampler_,sprites_.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}
     }};
-    std::array<VkWriteDescriptorSet,6> writes{};
-    for(std::uint32_t i=0;i<6;++i){
+    std::array<VkWriteDescriptorSet,7> writes{};
+    for(std::uint32_t i=0;i<7;++i){
         auto& w=writes[i];w.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;w.dstSet=descriptor_;w.dstBinding=i;w.descriptorCount=1;
         w.descriptorType=i?VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         if(i)w.pImageInfo=&images[i-1];else w.pBufferInfo=&buffer;
     }
-    vkUpdateDescriptorSets(device_,6,writes.data(),0,nullptr);return true;
+    vkUpdateDescriptorSets(device_,7,writes.data(),0,nullptr);return true;
 }
 void VulkanScenePass::recordTextures(VkCommandBuffer cmd){
     if(!texturesPending_)return;
@@ -261,6 +281,10 @@ void VulkanScenePass::recordTextures(VkCommandBuffer cmd){
     vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,0,nullptr,1,&barrier);
     VkBufferImageCopy glyphCopy{};glyphCopy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};glyphCopy.imageExtent={glyphExtent_.width,glyphExtent_.height,1};
     vkCmdCopyBufferToImage(cmd,glyphStaging_.buffer,glyphs_.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&glyphCopy);
+    barrier.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;barrier.newLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;barrier.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,0,0,nullptr,0,nullptr,1,&barrier);
+    barrier.image=sprites_.image;barrier.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,9,0,unsigned(SpriteKind::Count)};barrier.oldLayout=VK_IMAGE_LAYOUT_UNDEFINED;barrier.newLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;barrier.srcAccessMask=0;barrier.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,0,nullptr,1,&barrier);vkCmdCopyBufferToImage(cmd,spriteStaging_.buffer,sprites_.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,unsigned(spriteCopies_.size()),spriteCopies_.data());
     barrier.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;barrier.newLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;barrier.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_SHADER_READ_BIT;
     vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,0,0,nullptr,0,nullptr,1,&barrier);
     texturesPending_=false;

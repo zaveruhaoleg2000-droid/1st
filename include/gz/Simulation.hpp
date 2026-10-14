@@ -25,7 +25,7 @@ inline constexpr std::array<WeaponSpec,5> kWeapons{{
 }};
 inline const WeaponSpec& weaponSpec(Weapon w){return kWeapons[std::min(std::size_t(w),kWeapons.size()-1)];}
 struct DirectInput {float forward=0,right=0,yaw=0,pitch=0;bool sprint=false,crouch=false,fire=false,aim=false;};
-struct ShotEvent {double x=0,y=0,z=0,endX=0,endY=0,endZ=0;std::uint64_t tick=0;bool hit=false;};
+struct ShotEvent {double x=0,y=0,z=0,endX=0,endY=0,endZ=0;std::uint64_t tick=0;bool hit=false,valid=false;std::uint32_t shooter=0;};
 struct Soldier {
     std::uint32_t id=0, squad=0;
     double x=0, z=0; // global meters: unaffected by sector transitions
@@ -72,6 +72,7 @@ public:
     bool fireControlled();
     void setHeightSampler(std::function<float(double,double)> sampler){heightSampler_=std::move(sampler);}
     const DirectInput& directInput()const{return directInput_;}
+    const std::vector<ShotEvent>& recentShots()const{return recentShots_;}
     const ShotEvent& lastShot()const{return lastShot_;}
     static int applyDamage(Soldier& target,int damage,bool headshot=false);
     bool selectControlledSquad(std::uint32_t id);
@@ -93,6 +94,7 @@ private:
     void resolveCombat();
     DirectInput directInput_{};
     ShotEvent lastShot_{};
+    std::vector<ShotEvent> recentShots_;
     std::uint32_t controlledSoldierIndex_=0;
     std::function<float(double,double)> heightSampler_;
     WorkerPool workers_;

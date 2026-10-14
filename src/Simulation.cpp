@@ -40,7 +40,7 @@ void Simulation::newOperation(std::uint32_t playerSoldiers,std::uint32_t opponen
     tick_=shots_=casualties_=0;
     mode_=ViewMode::Command;
     commanderHasTarget_=false;
-    controlledSquad_=0;controlledSoldierIndex_=0;directInput_={};lastShot_={};
+    controlledSquad_=0;controlledSoldierIndex_=0;directInput_={};lastShot_={};recentShots_.clear();
     for (int side=0;side<2;++side) {
         std::uint32_t remaining = side==0?playerSoldiers:opponents;
         std::uint32_t indexOnSide=0;
@@ -174,7 +174,8 @@ bool Simulation::fireControlled(){
         }
     }
     if(heightSampler_)for(double t=.5;t<closest;t+=.5)if(eye+dy*t<heightSampler_(shooter.x+dx*t,shooter.z+dz*t)){closest=t;target=soldiers_.size();break;}
-    lastShot_={shooter.x,eye,shooter.z,shooter.x+dx*closest,eye+dy*closest,shooter.z+dz*closest,tick_,target<soldiers_.size()};
+    lastShot_={shooter.x,eye,shooter.z,shooter.x+dx*closest,eye+dy*closest,shooter.z+dz*closest,tick_,target<soldiers_.size(),true,shooter.id};
+    if(recentShots_.size()>=128)recentShots_.erase(recentShots_.begin());recentShots_.push_back(lastShot_);
     if(target<soldiers_.size()){auto& t=soldiers_[target];applyDamage(t,w.damage,head);if(t.health==0)++casualties_;}
     return true;
 }
@@ -282,6 +283,9 @@ void Simulation::resolveCombat() {
         auto& target=soldiers_[hit.target];
         if(shooter.ammo==0||shooter.magazine==0)continue;
         --shooter.ammo;--shooter.magazine;++shots_;
+        const float sy=heightSampler_?heightSampler_(shooter.x,shooter.z):0,ty=heightSampler_?heightSampler_(target.x,target.z):0;
+        if(recentShots_.size()>=128)recentShots_.erase(recentShots_.begin());
+        recentShots_.push_back({shooter.x,sy+1.3,shooter.z,target.x,ty+1.1,target.z,tick_,true,true,shooter.id});
         if(target.health>0){
             applyDamage(target,hit.damage);
             if(target.health==0)++casualties_;
@@ -300,6 +304,7 @@ void Simulation::step(std::uint32_t steps) {
         moveSoldiers();
         if(mode_==ViewMode::Direct&&directInput_.fire)fireControlled();
         ++tick_;
+        recentShots_.erase(std::remove_if(recentShots_.begin(),recentShots_.end(),[&](const auto& shot){return tick_>shot.tick+20;}),recentShots_.end());
         resolveCombat();
     }
 }
@@ -425,7 +430,7 @@ bool Simulation::load(const std::string& filename) {
         return false;
     std::uint32_t individual=squads[controlled].memberStart;
     if(version>=3&&(!readOne(in,individual)||individual>=soldiers.size()||soldiers[individual].squad!=controlled))return false;
-    controlledSoldierIndex_=individual;directInput_={};lastShot_={};
+    controlledSoldierIndex_=individual;directInput_={};lastShot_={};recentShots_.clear();
     squads_=std::move(squads);
     soldiers_=std::move(soldiers);
     tick_=tick;shots_=shots;casualties_=casualties;

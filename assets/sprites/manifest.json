@@ -1,0 +1,26 @@
+{
+  "seed": 1989,
+  "version": 1,
+  "layers": [
+    "broadleaf",
+    "pine",
+    "dry_tree",
+    "grass",
+    "reed",
+    "flowers",
+    "fern",
+    "cloud",
+    "muzzle",
+    "smoke",
+    "spark",
+    "dust",
+    "impact",
+    "rain",
+    "leaf_crown",
+    "fire"
+  ],
+  "disk_bytes": 4194320,
+  "resident_bytes": 5592384,
+  "combined_texture_resident_bytes": 98145748,
+  "budget_bytes": 100000000
+}

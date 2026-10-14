@@ -9,7 +9,7 @@ namespace gz {
 // IDs are stable and correspond to assets/textures/manifest.json.
 enum class TextureMaterial : std::uint8_t {
     None, GrassShort, GrassTall, Meadow, DirtDry, MudWet, Sand, Gravel,
-    Rock, Asphalt, Concrete, Brick, WoodPlanks, TreeBark, Leaves, Water, Snow, PlayerUniform, OpponentUniform, Skin, Armor, Rubber, Glass, Roof, WeaponMetal, WeaponWood, Fabric, Stone, RoofSlate, LeavesDry, Fence, Crate, Count
+    Rock, Asphalt, Concrete, Brick, WoodPlanks, TreeBark, Leaves, Water, Snow, PlayerUniform, OpponentUniform, Skin, Armor, Rubber, Glass, Roof, WeaponMetal, WeaponWood, Fabric, Stone, RoofSlate, LeavesDry, Fence, Crate, Rubble, Moss, ReedStem, Wildflowers, PineBark, Plaster, Rust, CeramicTile, Count
 };
 class TextureLibrary {
 public:

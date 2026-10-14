@@ -53,6 +53,7 @@ struct RenderSubmission {
     float visualTimeSeconds=0;
     GpuSceneCamera camera{};
     GeometryView interfaceMesh{};
+    GeometryView spriteMesh{};
     TerrainMacroView terrainMacro{};
 };
 struct GraphicsLimits {
@@ -74,6 +75,8 @@ struct RenderTelemetry {
     std::uint64_t graphicsResidentBytes=0;
     std::uint32_t materialTextureCount=0,shadowMapSize=0,msaaSamples=1;
     std::uint64_t validationErrors=0;
+    std::uint64_t spriteUploadedBytes=0;
+    std::uint32_t spriteCount=0;
     std::uint64_t interfaceUploadedBytes=0,terrainTextureUploadedBytes=0;
     std::uint32_t terrainTextureResolution=0;
 };

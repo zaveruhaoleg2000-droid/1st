@@ -7,6 +7,7 @@
 #include "gz/EnvironmentFX.hpp"
 #include "gz/Shaders.hpp"
 #include <array>
+#include <memory>
 #include <optional>
 #include <cstdint>
 #include <string>
@@ -24,6 +25,7 @@ struct VisualEffects {
     bool wind = true;              // Deterministic canopy sway, keyed by visual time.
     bool waterReflections = true;  // Procedural sky/riverbank reflection approximation.
 };
+class SpriteAtlas;
 class Renderer {
 public:
     void resize(int w,int h);
@@ -89,6 +91,7 @@ private:
     void drawSky(const Camera& camera);
     void groundShadow(float x,float z,float height,float width,float lengthFactor);
     void drawFog();
+    void drawSprites(const Simulation& sim,const Camera& camera);
     void drawPrecipitation();
     void drawEmissiveEffects();
     std::uint32_t shadeLocalLights(std::uint32_t color,float x,float y,float z,float normalY)const;
@@ -115,6 +118,8 @@ private:
     bool battlefieldDetail_=true;
     bool photoMode_=false;
     TextureLibrary textures_;
+    std::shared_ptr<SpriteAtlas> spriteAtlas_;
+    bool spriteTried_=false;
     bool texturingEnabled_=true;
     float globalZoom_=1.f,globalPanX_=0.f,globalPanY_=0.f;
     VisualEffects effects_{};

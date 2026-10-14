@@ -1,11 +1,12 @@
 #pragma once
 #include "gz/Renderer.hpp"
+#include "gz/ModelLod.hpp"
 #include <cstdint>
 #include <vector>
 namespace gz {
 // Extra native model surfaces; the original texture IDs remain unchanged.
 enum class NativeMaterial : std::uint8_t {
-    PlayerUniform=17,OpponentUniform,Skin,Armor,Rubber,Glass,Roof,WeaponMetal,WeaponWood,Fabric,Stone,RoofSlate,LeavesDry,Fence,Crate,MuzzleFlash,Count
+    PlayerUniform=17,OpponentUniform,Skin,Armor,Rubber,Glass,Roof,WeaponMetal,WeaponWood,Fabric,Stone,RoofSlate,LeavesDry,Fence,Crate,MuzzleFlash=64,Count
 };
 // Data layout matches the D3D11 input layout (12 float32 components).
 struct SceneVertex {
@@ -30,7 +31,9 @@ public:
     SceneMeshBuilder(const SceneMeshBuilder&)=delete;
     SceneMeshBuilder& operator=(const SceneMeshBuilder&)=delete;
     void build(SceneMesh& mesh,TerrainWorld& terrain,const Simulation& sim,const Camera& camera,int selectedSquad,AtmosphereSettings atmosphere={});
-    static void addWeapon(SceneMesh& mesh,Weapon weapon,bool detailed=true);
+    static void addWeapon(SceneMesh& mesh,Weapon weapon,bool detailed=true,ModelLod lod=ModelLod::Near);
+    static void addSoldierForLod(SceneMesh& mesh,ModelLod lod);
+    static void addVehicleForLod(SceneMesh& mesh,int kind,ModelLod lod);
     static void addEnvironmentProp(SceneMesh& mesh,int kind,std::uint32_t seed=1989,bool detailed=true);
     static void addViewWeapon(SceneMesh& mesh,const Simulation& sim,const Camera& camera,float ground);
     static void addTree(SceneMesh& mesh,float x,float y,float z,float scale=1.f,std::uint32_t seed=0,bool detailed=false);
@@ -43,6 +46,7 @@ private:
     SceneMesh staticCache_,units_;
     std::vector<std::uint64_t> unitState_,nextUnitState_;
     std::uint64_t unitBuildCount_=0;
+    std::vector<ModelLod> soldierLods_;
     const TerrainWorld* cachedTerrain_=nullptr;
     std::uint64_t cachedTerrainRevision_=0,resourceId_=0,staticRevision_=0,dynamicRevision_=0;
     Camera cachedCamera_{};

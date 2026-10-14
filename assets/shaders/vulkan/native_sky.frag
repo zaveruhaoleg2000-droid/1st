@@ -23,13 +23,6 @@ vec3 skyRadiance(vec3 ray){
     vec3 result=mix(horizon,pc.sky.rgb*(vec3(.48,.67,1.)),pow(elevation,.42));
     float sun=clamp(dot(ray,normalize(pc.sun.xyz)),0.,1.);
     result+=pc.sunColor.rgb*pc.time.w*(pow(sun,512.)*2.2+pow(sun,16.)*.22);
-    if(ray.y>.015){
-        vec2 cloudUV=ray.xz/(ray.y+.18)*2.4+vec2(pc.time.x*.005,pc.time.x*.002);
-        float clouds=smoothstep(.53-pc.effects.y*.22,.68-pc.effects.y*.18,fbm(cloudUV));
-        clouds*=smoothstep(.015,.2,ray.y);
-        vec3 cloudColor=mix(pc.sky.rgb*.65,vec3(.92,.91,.85),clamp(pc.sun.w+.25,0.,1.));
-        result=mix(result,cloudColor,clouds*pc.effects.y);
-    }
     return max(result,vec3(.003));
 }
 vec3 displayColor(vec3 hdr){

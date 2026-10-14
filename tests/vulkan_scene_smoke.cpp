@@ -1,6 +1,7 @@
 #include "TestCheck.hpp"
 #include "gz/NativeScene.hpp"
 #include "gz/TacticalHud.hpp"
+#include "gz/Sprites.hpp"
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <chrono>
@@ -41,7 +42,7 @@ int main(){
     gz::Camera camera;camera.focusX=3000;camera.focusZ=1250;camera.distance=900;
     gz::Campaign reviewCampaign;gz::ScenarioCatalog reviewScenarios;
     if(review){GZ_CHECK(reviewScenarios.loadDirectory("assets/scenarios"));reviewCampaign.begin(*reviewScenarios.at(0),sim);GZ_CHECK(reviewCampaign.launchContract(sim));terrain.setGenerator(reviewCampaign.state().world);}
-    gz::SceneMesh mesh;gz::SceneMeshBuilder builder;
+    gz::SpriteBatch sprites;gz::SceneMesh mesh;gz::SceneMeshBuilder builder;
     gz::AtmosphereSettings atmosphere{};
     float visualTime=7;
     gz::TacticalHud hud;GZ_CHECK(hud.loadFont("assets/ui/glyphs.pgm"));bool showHud=false;
@@ -53,6 +54,7 @@ int main(){
         builder.build(mesh,terrain,sim,camera,0,atmosphere);
         gz::RenderSubmission frame;
         frame.fallbackFrame={sentinel.data(),width,height,width,gz::PixelFormat::BGRA8};
+        sprites.build(terrain,sim,camera,atmosphere,visualTime);frame.spriteMesh=sprites.geometry();
         frame.worldMesh=gz::makeGeometryView(mesh);
         frame.camera=gz::makeGpuSceneCamera(camera,terrain.heightAt(camera.focusX,camera.focusZ),atmosphere);
         frame.visualTimeSeconds=visualTime;frame.terrainMacro=macroView;
@@ -113,7 +115,7 @@ int main(){
     const auto afterMacro=host.telemetry().terrainTextureUploadedBytes;submit();GZ_CHECK(host.telemetry().terrainTextureUploadedBytes==afterMacro);
     showHud=true;submit();
     const auto withHud=capture(display,window,width,height,"test_build_vulkan_hud.ppm");
-    GZ_CHECK(host.telemetry().interfaceUploadedBytes>0);
+    GZ_CHECK(host.telemetry().interfaceUploadedBytes>0);GZ_CHECK(host.telemetry().spriteUploadedBytes>0&&host.telemetry().spriteCount>0);
     GZ_CHECK(host.telemetry().validationErrors==0);
     GZ_CHECK(withHud!=water);
     if(review){
@@ -127,7 +129,12 @@ int main(){
         capture(display,window,width,height,"test_build_review_terrain.ppm");
         camera.firstPerson=true;camera.focusX=float(sim.soldier(sim.controlledSoldier()).x);camera.focusZ=float(sim.soldier(sim.controlledSoldier()).z);camera.distance=1;camera.pitch=0;camera.yaw=-1.5708f;camera.fov=78;atmosphere={};sim.setMode(gz::ViewMode::Direct);submit();
         capture(display,window,width,height,"test_build_review_first_person.ppm");
+        sim.setHeightSampler([&](double x,double z){return terrain.heightAt(x,z);});gz::DirectInput firing;firing.yaw=camera.yaw;sim.setDirectInput(firing);GZ_CHECK(sim.fireControlled());submit();
+        capture(display,window,width,height,"test_build_review_weapon_effects.ppm");
         GZ_CHECK(host.telemetry().validationErrors==0);
+        sim.setMode(gz::ViewMode::Command);camera.firstPerson=false;camera.distance=25;camera.pitch=.42f;camera.yaw=.7f;camera.focusX=3200;camera.focusZ=1510;
+        const auto trees=gz::treeLayout(terrain,camera);if(!trees.empty()){const auto& t=*std::min_element(trees.begin(),trees.end(),[&](auto a,auto b){return std::hypot(a.x-camera.focusX,a.z-camera.focusZ)<std::hypot(b.x-camera.focusX,b.z-camera.focusZ);});camera.focusX=t.x;camera.focusZ=t.z;}
+        submit();capture(display,window,width,height,"test_build_review_foliage.ppm");
         std::cout<<"Review captures: native Vulkan + Ukrainian HUD + 2048 terrain macro; software driver, 1280x720.\n";
     }
     host.shutdown();XDestroyWindow(display,window);XCloseDisplay(display);
