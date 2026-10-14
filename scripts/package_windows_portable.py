@@ -8,7 +8,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
 SHADERS = ('native_scene.vert', 'native_scene.frag', 'native_shadow.vert',
-           'native_shadow.frag', 'native_sky.vert', 'native_sky.frag')
+           'native_shadow.frag', 'native_sky.vert', 'native_sky.frag', 'native_ui.vert', 'native_ui.frag')
 
 
 def executable(build, name):
@@ -55,10 +55,10 @@ def main():
     }.items():
         (dest / filename).write_bytes(('@echo off\r\ncd /d "%~dp0"\r\n' + command + '\r\n').encode('ascii'))
     shutil.copy2(ROOT / 'README_UA.md', dest / 'README_GAME_UA.md')
-    for document in ('GPU_OPTIMIZATION_UA.md', 'GRAPHICS_RTX3050TI_UA.md'):
+    for document in ('GPU_OPTIMIZATION_UA.md', 'GRAPHICS_RTX3050TI_UA.md', 'UI_TERRAIN_v024_UA.md'):
         if (ROOT / 'docs' / document).is_file():
             shutil.copy2(ROOT / 'docs' / document, dest / document)
-    (dest / 'README_UA.txt').write_text('''GRAY ZONE: 1989 — v0.0.23, Windows x64
+    (dest / 'README_UA.txt').write_text('''GRAY ZONE: 1989 — v0.0.24, Windows x64
 
 Повністю розпакуйте архів. Запуск: PLAY.bat або PLAY_HIGH.bat.
 Для RTX 3050 Ti 4 ГБ почніть із високої якості. Якщо гра працює повільно,
@@ -80,7 +80,8 @@ VERIFY_GPU.bat перевіряє native Vulkan без дозволу на CPU f
 і записує gpu_smoke_test.log; graphics_backend.log містить стан рендерера.
 GPU_PROBE.bat перевіряє тільки loader/драйвер.
 
-Перевірки, вимірювання та відомі обмеження: GRAPHICS_RTX3050TI_UA.md.
+Новий HUD, seed-рельєф і макротекстури: UI_TERRAIN_v024_UA.md.
+Попередня графічна база: GRAPHICS_RTX3050TI_UA.md.
 У цьому середовищі немає фізичної RTX 3050 Ti чи Windows 11;
 частота кадрів на вашому ПК ще не виміряна.
 ''', encoding='utf-8-sig')
@@ -92,7 +93,9 @@ GPU_PROBE.bat перевіряє тільки loader/драйвер.
     evidence = dest / 'verification'
     evidence.mkdir()
     if args.evidence_dir:
-        for source in args.evidence_dir.glob('graphics-*.log'):
+        for source in args.evidence_dir.glob('*.log'):
+            if not source.name.startswith(('graphics-', 'v024-')):
+                continue
             if 'tests' in source.name or 'gallery' in source.name or 'smoke' in source.name:
                 shutil.copy2(source, evidence / source.name)
     if args.smoke_runner or __import__('os').name == 'nt':

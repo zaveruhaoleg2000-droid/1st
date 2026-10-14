@@ -11,6 +11,8 @@
 #include "gz/RenderBackend.hpp"
 #include "gz/NativeScene.hpp"
 #include "gz/Diagnostics.hpp"
+#include "gz/TacticalHud.hpp"
+#include <cstdlib>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -31,6 +33,9 @@ struct App {
     gz::SceneMesh gpuMesh;
     gz::FrameMeter meter;
     gz::DebugHud debugHud;
+    gz::TacticalHud tacticalHud;
+    gz::TerrainAppearance terrainAppearance;
+    int gpuQuality=2;
     bool showDiagnostics=false;
     bool gpuEnabled=false;
     gz::GraphicsAPI rendererPreference=gz::GraphicsAPI::Automatic;
@@ -60,7 +65,8 @@ struct App {
         const bool scenariosReady=scenarios.loadDirectory("assets/scenarios");
         renderer.resize(960,600);
         renderer.setTerrainDirectory("assets/terrain");gpuTerrain.setTileDirectory("assets/terrain");
-        const bool hudReady=debugHud.load("assets/ui/glyphs.pgm");
+        const bool hudReady=debugHud.load("assets/ui/glyphs.pgm")&&tacticalHud.loadFont("assets/ui/glyphs.pgm");
+        if(const auto* preset=std::getenv("GZ_GPU_QUALITY"))gpuQuality=std::string(preset)=="low"?0:std::string(preset)=="medium"?1:2;
         const bool menuReady=menuScene.load("assets/europe/europe_vertices.gzm","assets/ui/glyphs.pgm","assets/ui/advances.bin");
         readSettings();
         const auto textures=renderer.loadTextures("assets/textures/runtime",textureResolution);
@@ -121,6 +127,10 @@ struct App {
         auto fx=renderer.effects();fx.antialiasing=menu.aa;fx.wind=menu.wind;fx.waterReflections=menu.water;
         renderer.setEffects(fx);
     }
+    void applyWorld(){
+        const auto settings=campaign.active()?campaign.state().world:gz::WorldSettings{};
+        gpuTerrain.setGenerator(settings);gpuTerrain.setGeneratedCacheDirectory("saves/terrain_cache");renderer.setWorldSettings(settings);
+    }
     void applyAtmosphere(){
         renderer.setAtmosphere(atmosphere);
         sim.setVisibilityMeters(gz::atmosphereProfile(atmosphere).visibilityMeters);
@@ -144,15 +154,15 @@ struct App {
         case gz::MenuAction::NewGame:
         case gz::MenuAction::StartScenario1:case gz::MenuAction::StartScenario2:case gz::MenuAction::StartScenario3:{
             const int i=action==gz::MenuAction::NewGame?0:int(action)-int(gz::MenuAction::StartScenario1);
-            if(const auto* sc=scenarios.at(std::size_t(i))){restart();campaign.begin(*sc,sim);changeMode(gz::ViewMode::GlobalAI);audio.play(gz::SoundCue::Radio);}
+            if(const auto* sc=scenarios.at(std::size_t(i))){restart();campaign.begin(*sc,sim);applyWorld();changeMode(gz::ViewMode::GlobalAI);audio.play(gz::SoundCue::Radio);}
             else{menu.page=gz::MenuPage::Scenario;menu.selected=0;}
             break;
         }
         case gz::MenuAction::LoadSlot1:case gz::MenuAction::LoadSlot2:case gz::MenuAction::LoadSlot3:{
             int i=int(action)-int(gz::MenuAction::LoadSlot1);
             bool ok=campaign.loadSlot(slotPath(i),sim,scenarios);
-            if(!ok && sim.load(slotPath(i))){if(auto* sc=scenarios.at(0))campaign.begin(*sc,sim);ok=true;}
-            if(ok){selected=int(sim.controlledSquad());executeTicks=0;completedTurns=0;camera={};applyAtmosphere();audio.play(gz::SoundCue::Confirm);}
+            if(!ok && sim.load(slotPath(i))){if(auto* sc=scenarios.at(0))campaign.begin(*sc,sim);campaign.setWorldSettings({});ok=true;}
+            if(ok){applyWorld();selected=int(sim.controlledSquad());executeTicks=0;completedTurns=0;camera={};applyAtmosphere();audio.play(gz::SoundCue::Confirm);}
             else{menu.page=gz::MenuPage::Load;refreshSaves();audio.play(gz::SoundCue::Back);}
             break;
         }
@@ -226,6 +236,26 @@ struct App {
         if(sim.mode()==gz::ViewMode::Direct){const auto& s=sim.soldier(sim.controlledSoldier());camera.focusX=float(s.x);camera.focusZ=float(s.z);}
     }
     void restart(){sim.newOperation(stress?800:96);applyAtmosphere();selected=0;camera={};completedTurns=0;executeTicks=0;changeMode(gz::ViewMode::Command);}
+    bool hudCommand(gz::HudCommand command){
+        switch(command.action){
+        case gz::HudAction::Pause:paused=!paused;break;
+        case gz::HudAction::ToggleTurns:turnBased=!turnBased;executeTicks=0;break;
+        case gz::HudAction::NextTurn:if(turnBased&&!paused)executeTicks=50;break;
+        case gz::HudAction::Hold:sim.setHoldPosition(std::uint32_t(selected),true);break;
+        case gz::HudAction::Map:changeMode(gz::ViewMode::GlobalAI);break;
+        case gz::HudAction::Deploy:deployContract();break;
+        case gz::HudAction::Repeat:if(campaign.repeatContract())changeMode(gz::ViewMode::GlobalAI);break;
+        case gz::HudAction::Select:selected=command.argument;sim.selectControlledSquad(std::uint32_t(selected));break;
+        case gz::HudAction::Focus:camera.focusX=command.worldX;camera.focusZ=command.worldZ;break;
+        case gz::HudAction::Quality:{
+            gpuQuality=(gpuQuality+1)%3;
+            const std::string setting=std::string("GZ_GPU_QUALITY=")+(gpuQuality==0?"low":gpuQuality==1?"medium":"high");
+            _putenv(setting.c_str());RECT rc{};GetClientRect(hwnd,&rc);gpu.resize(std::uint32_t(rc.right),std::uint32_t(rc.bottom));break;
+        }
+        default:return false;
+        }
+        return true;
+    }
     void onMouse(int msg,int screenX,int screenY){
         if(menu.page!=gz::MenuPage::Playing){if(msg==WM_LBUTTONDOWN)menuMouse(screenX,screenY,true);return;}
         if(sim.mode()==gz::ViewMode::GlobalAI){
@@ -237,29 +267,40 @@ struct App {
             }
             return;
         }
-        RECT r;GetClientRect(hwnd,&r);
-        int x=screenX*renderer.width()/std::max<LONG>(1,r.right),y=screenY*renderer.height()/std::max<LONG>(1,r.bottom);
+        RECT r{};GetClientRect(hwnd,&r);updateCamera();
+        const bool native=gpuEnabled&&gpu.nativeSceneReady();
+        if(native && !renderer.photoMode()){
+            if(msg==WM_LBUTTONDOWN&&hudCommand(tacticalHud.hit(float(screenX),float(screenY))))return;
+            if(tacticalHud.contains(float(screenX),float(screenY)))return;
+        }
+        const auto gpuCamera=gz::makeGpuSceneCamera(camera,gpuTerrain.heightAt(camera.focusX,camera.focusZ),atmosphere);
+        const auto projection=gz::makeGpuFrameConstants(gpuCamera,std::uint32_t(r.right),std::uint32_t(r.bottom),0);
+        renderer.prepareCamera(camera);
+        const int x=native?screenX:screenX*renderer.width()/std::max<LONG>(1,r.right);
+        const int y=native?screenY:screenY*renderer.height()/std::max<LONG>(1,r.bottom);
         if(msg==WM_LBUTTONDOWN){
-            double best=900.0;int bestID=-1;
-            for(std::size_t i=0;i<sim.squadCount();++i){
-                const auto& q=sim.squad(i);if(q.side!=gz::Side::Player)continue;
-                const auto& s=sim.soldier(q.memberStart);if(s.health<=0)continue;
-                int sx=0,sy=0;
-                if(!renderer.project(camera,float(s.x),gz::Renderer::terrainHeight(float(s.x),float(s.z))+14,float(s.z),sx,sy))continue;
-                double dx=sx-x,dy=sy-y,d2=dx*dx+dy*dy;
-                if(d2<best){best=d2;bestID=int(i);}
+            float best=900.f;int bestID=-1;
+            for(std::size_t i=0;i<sim.squadCount();++i){const auto& q=sim.squad(i);if(q.side!=gz::Side::Player)continue;
+                for(std::size_t j=q.memberStart;j<q.memberStart+q.memberCount;++j){const auto& soldier=sim.soldier(j);if(soldier.health<=0)continue;
+                    float px=0,py=0;
+                    if(native){const float h=gpuTerrain.heightAt(soldier.x,soldier.z)+(camera.distance<650.f?1.f:16.f);
+                        if(!gz::projectGpuPoint(projection,int(r.right),int(r.bottom),float(soldier.x),h,float(soldier.z),px,py))continue;
+                    }else{int sx=0,sy=0;if(!renderer.project(camera,float(soldier.x),renderer.worldHeightAt(float(soldier.x),float(soldier.z))+14,float(soldier.z),sx,sy))continue;px=float(sx);py=float(sy);}
+                    const float distance=(px-x)*(px-x)+(py-y)*(py-y);
+                    if(distance<best){best=distance;bestID=int(i);}
+                }
             }
             if(bestID>=0){selected=bestID;sim.selectControlledSquad(std::uint32_t(selected));}
         }else if(msg==WM_RBUTTONDOWN){
             float tx=0,tz=0;
-            if(renderer.screenToGround(camera,x,y,tx,tz)){
-                if(sim.mode()==gz::ViewMode::Direct)sim.moveCommander(tx,tz);
-                else sim.orderSquad(std::uint32_t(selected),tx,tz);
-            }
+            const bool hit=native?gz::pickGpuTerrain(gpuCamera,gpuTerrain,int(r.right),int(r.bottom),float(x),float(y),tx,tz):renderer.screenToGround(camera,x,y,tx,tz);
+            if(hit){if(sim.mode()==gz::ViewMode::Direct)sim.moveCommander(tx,tz);else sim.orderSquad(std::uint32_t(selected),tx,tz);}
         }
     }
+
     void paint(){
         if(!hwnd||IsIconic(hwnd))return;
+        gpuTerrain.pollGenerated();renderer.pollTerrain();
         const auto started=Clock::now();
         renderer.setVisualTime(std::chrono::duration<float>(Clock::now()-visualStart).count());
         const bool showMenu=menu.page!=gz::MenuPage::Playing;
@@ -272,6 +313,7 @@ struct App {
             renderer.draw(sim,camera,selected);
             if(!renderer.photoMode())debugHud.drawContract(renderer.mutablePixels(),renderer.width(),renderer.height(),campaign.state());
         }else{
+            terrainAppearance.update(gpuTerrain.generatorSettings(),camera.focusX,camera.focusZ,gpuQuality==2?4096:gpuQuality==1?2048:1024);
             gpuBuilder.build(gpuMesh,gpuTerrain,sim,camera,selected,atmosphere);
         }
         const float sceneMs=std::chrono::duration<float,std::milli>(Clock::now()-started).count();
@@ -289,7 +331,13 @@ struct App {
         submission.visualTimeSeconds=renderer.visualTime();
         if(nativeTactical){
             submission.worldMesh=gz::makeGeometryView(gpuMesh);
+            submission.terrainMacro=terrainAppearance.view();
             submission.camera=gz::makeGpuSceneCamera(camera,gpuTerrain.heightAt(camera.focusX,camera.focusZ),atmosphere,renderer.effects());
+            if(!renderer.photoMode()){
+                RECT client{};GetClientRect(hwnd,&client);
+                tacticalHud.build(sim,gpuTerrain,camera,campaign.active()?&campaign.state():nullptr,selected,int(client.right),int(client.bottom),paused,turnBased,gpuQuality,terrainAppearance.loading());
+                submission.interfaceMesh=tacticalHud.geometry();
+            }
         }
         if(gpuEnabled && gpu.submit(submission)){
             meter.record(sceneMs,std::chrono::duration<float,std::milli>(Clock::now()-started).count());
@@ -437,8 +485,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp){
       case VK_F7:{auto fx=app->renderer.effects();fx.wind=!fx.wind;app->renderer.setEffects(fx);app->menu.wind=fx.wind;app->writeSettings();return 0;}
       case VK_F8:{auto fx=app->renderer.effects();fx.waterReflections=!fx.waterReflections;app->renderer.setEffects(fx);app->menu.water=fx.waterReflections;app->writeSettings();return 0;}
       case VK_F9:{bool ok=app->campaign.loadSlot(App::slotPath(0),app->sim,app->scenarios);
-          if(!ok&&app->sim.load(App::slotPath(0))){if(const auto* sc=app->scenarios.at(0))app->campaign.begin(*sc,app->sim);ok=true;}
-          if(ok){app->selected=int(app->sim.controlledSquad());app->executeTicks=0;app->applyAtmosphere();app->audio.play(gz::SoundCue::Confirm);}
+          if(!ok&&app->sim.load(App::slotPath(0))){if(const auto* sc=app->scenarios.at(0))app->campaign.begin(*sc,app->sim);app->campaign.setWorldSettings({});ok=true;}
+          if(ok){app->applyWorld();app->selected=int(app->sim.controlledSquad());app->executeTicks=0;app->applyAtmosphere();app->audio.play(gz::SoundCue::Confirm);}
           return 0;}
       case 'M':if(app->sim.mode()==gz::ViewMode::GlobalAI)app->cycleGlobalRelief();return 0;
       case VK_F11:{
@@ -505,10 +553,14 @@ int gpuPackageSmoke(App& app,bool rendererInitialized){
     app.changeMode(gz::ViewMode::Command);
     app.camera.focusX=3055.5f;app.camera.focusZ=1258.f;app.camera.distance=28;app.camera.pitch=.36f;
     for(int i=0;i<6;++i){app.sim.step(1);app.paint();}
+    const auto deadline=Clock::now()+std::chrono::seconds(25);
+    const auto expectedMacro=app.gpuQuality==2?4096u:app.gpuQuality==1?2048u:1024u;
+    while(app.gpu.activeAPI()==gz::GraphicsAPI::Vulkan && app.gpu.telemetry().terrainTextureResolution!=expectedMacro && Clock::now()<deadline){app.paint();Sleep(20);}
     const auto& stats=app.gpu.telemetry();
-    if(!check(app.gpu.activeAPI()==gz::GraphicsAPI::Vulkan && stats.nativeSceneFrames==6 &&
-              stats.materialTextureCount==16 && stats.validationErrors==0,"six native textured Vulkan frames submitted"))return 5;
-    log<<"textures="<<stats.materialTextureCount<<", shadow="<<stats.shadowMapSize<<", MSAA="<<stats.msaaSamples
+    log<<"frames="<<stats.nativeSceneFrames<<", UI="<<stats.interfaceUploadedBytes<<", macro="<<stats.terrainTextureResolution<<", expected="<<expectedMacro<<", status="<<app.gpu.error()<<'\n';
+    if(!check(app.gpu.activeAPI()==gz::GraphicsAPI::Vulkan && stats.nativeSceneFrames>=6 && stats.interfaceUploadedBytes>0 && stats.terrainTextureResolution==expectedMacro &&
+              stats.materialTextureCount==16 && stats.validationErrors==0,"native Vulkan frames, HUD and generated terrain macro submitted"))return 5;
+    log<<"native frames="<<stats.nativeSceneFrames<<", terrain macro="<<stats.terrainTextureResolution<<", UI bytes="<<stats.interfaceUploadedBytes<<", textures="<<stats.materialTextureCount<<", shadow="<<stats.shadowMapSize<<", MSAA="<<stats.msaaSamples
        <<", graphics allocations="<<stats.graphicsResidentBytes<<", validation errors="<<stats.validationErrors<<'\n';
     log<<"GPU PACKAGE SMOKE: PASS\n";return log?0:5;
 }
@@ -551,7 +603,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
     wc.lpszClassName=L"GZ89_NATIVE_3D";wc.lpfnWndProc=WindowProc;
     wc.hCursor=LoadCursor(nullptr,IDC_ARROW);wc.hIcon=LoadIcon(nullptr,IDI_APPLICATION);
     if(!RegisterClassExW(&wc))return 1;
-    HWND hwnd=CreateWindowExW(0,wc.lpszClassName,L"GRAY ZONE: 1989 — v0.0.23",WS_OVERLAPPEDWINDOW|WS_VISIBLE,
+    HWND hwnd=CreateWindowExW(0,wc.lpszClassName,L"GRAY ZONE: 1989 — v0.0.24",WS_OVERLAPPEDWINDOW|WS_VISIBLE,
         CW_USEDEFAULT,CW_USEDEFAULT,1150,760,nullptr,nullptr,instance,&app);
     if(!hwnd)return 2;app.hwnd=hwnd;ShowWindow(hwnd,show);
     RECT rc;GetClientRect(hwnd,&rc);app.renderer.resize(rc.right,rc.bottom);
@@ -560,7 +612,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
     app.gpuEnabled=app.gpu.usingGPU(); // prefer Vulkan; runtime fallback via GDI
     {
         std::ofstream log("graphics_backend.log",std::ios::app);
-        log<<"GZ89 v0.0.23 renderer="<<gz::graphicsAPIName(app.gpu.activeAPI())
+        log<<"GZ89 v0.0.24 renderer="<<gz::graphicsAPIName(app.gpu.activeAPI())
            <<" preference="<<gz::graphicsAPIName(app.rendererPreference)
            <<" status="<<app.gpu.error()<<"\n";
     }

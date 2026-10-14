@@ -278,8 +278,8 @@ public:
         features.enabledValidationFeatureCount=1;features.pEnabledValidationFeatures=&synchronization;
         features.pNext=&debugInfo;
         VkApplicationInfo info{VK_STRUCTURE_TYPE_APPLICATION_INFO};
-        info.pApplicationName="GRAY ZONE: 1989";info.applicationVersion=VK_MAKE_VERSION(0,0,23);
-        info.pEngineName="GZ89";info.engineVersion=VK_MAKE_VERSION(0,0,23);info.apiVersion=VK_API_VERSION_1_0;
+        info.pApplicationName="GRAY ZONE: 1989";info.applicationVersion=VK_MAKE_VERSION(0,0,24);
+        info.pEngineName="GZ89";info.engineVersion=VK_MAKE_VERSION(0,0,24);info.apiVersion=VK_API_VERSION_1_0;
         VkInstanceCreateInfo ic{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
         ic.pApplicationInfo=&info;ic.enabledExtensionCount=validation?4:2;ic.ppEnabledExtensionNames=extensions;
         if(validation){ic.enabledLayerCount=1;ic.ppEnabledLayerNames=&validationLayer;ic.pNext=&features;}
@@ -359,7 +359,7 @@ public:
         const bool native=requestedNative;
         std::uint64_t meshBytes=0;
         // Reject invalid data before acquiring a swapchain semaphore.
-        if(native && !nativeScene_.upload(submission.worldMesh,constants,meshBytes,error))return false;
+        if(native && !nativeScene_.upload(submission,constants,meshBytes,error))return false;
         std::uint32_t image=0;
         VkResult result=vkAcquireNextImageKHR(device_,swapchain_,UINT64_MAX,acquired_,VK_NULL_HANDLE,&image);
         if(result==VK_ERROR_OUT_OF_DATE_KHR){error="Vulkan swapchain outdated (resize required)";return false;}
@@ -449,6 +449,8 @@ public:
             telemetry_.materialTextureCount=nativeScene_.materialCount();
             telemetry_.shadowMapSize=nativeScene_.shadowMapSize();
             telemetry_.msaaSamples=nativeScene_.sampleCount();
+            telemetry_.interfaceUploadedBytes+=nativeScene_.interfaceBytes();
+            telemetry_.terrainTextureUploadedBytes+=nativeScene_.macroBytes();telemetry_.terrainTextureResolution=nativeScene_.macroResolution();
             telemetry_.uploadedBytes+=meshBytes;
         }else{
             telemetry_.uploadedBytes+=std::uint64_t(extent_.width)*extent_.height*4;

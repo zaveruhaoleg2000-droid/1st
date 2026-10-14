@@ -40,6 +40,7 @@ class VulkanScenePass {
     VkPipelineLayout layout_=VK_NULL_HANDLE;
     VkPipeline pipeline_=VK_NULL_HANDLE;
     VkPipeline skyPipeline_=VK_NULL_HANDLE,shadowPipeline_=VK_NULL_HANDLE;
+    VkPipeline uiPipeline_=VK_NULL_HANDLE;
     VkRenderPass shadowPass_=VK_NULL_HANDLE;
     VkFramebuffer shadowFramebuffer_=VK_NULL_HANDLE;
     VkDescriptorSetLayout descriptorLayout_=VK_NULL_HANDLE;
@@ -47,6 +48,17 @@ class VulkanScenePass {
     VkDescriptorSet descriptor_=VK_NULL_HANDLE;
     VkSampler materialSampler_=VK_NULL_HANDLE,shadowSampler_=VK_NULL_HANDLE;
     ImageResource materials_,shadow_,msaaColor_;
+    ImageResource glyphs_;
+    ImageResource macro_;
+    HostBuffer macroStaging_;
+    std::vector<VkBufferImageCopy> macroCopies_;
+    bool macroPending_=false;
+    std::uint64_t macroRevision_=0,macroBytes_=0;
+    std::uint32_t macroResolution_=0;
+    HostBuffer glyphStaging_,uiVertices_,uiIndices_;
+    VkExtent2D glyphExtent_{};
+    std::uint32_t uiIndexCount_=0;
+    std::uint64_t uiBytes_=0;
     HostBuffer uniforms_,textureStaging_;
     std::vector<VkBufferImageCopy> textureCopies_;
     bool texturesPending_=false;
@@ -82,6 +94,9 @@ class VulkanScenePass {
     bool makeMaterials(std::string& error);
     bool makeShadow(std::string& error);
     bool makeDescriptors(std::string& error);
+    bool makeInterface(std::string& error);
+    bool prepareMacro(const TerrainMacroView& data,std::string& error);
+    void recordMacro(VkCommandBuffer command);
     void recordTextures(VkCommandBuffer command);
     void destroySwapchain()noexcept;
 public:
@@ -93,11 +108,14 @@ public:
                     const std::vector<VkImage>& images,std::size_t budget,std::string& error);
     void destroy()noexcept;
     bool ready()const noexcept{return ready_;}
-    bool upload(const GeometryView& mesh,const GpuFrameConstants& constants,std::uint64_t& bytes,std::string& error);
+    bool upload(const RenderSubmission& submission,const GpuFrameConstants& constants,std::uint64_t& bytes,std::string& error);
     void record(VkCommandBuffer command,std::uint32_t swapImage,const GpuFrameConstants& constants);
     std::uint32_t triangleCount()const noexcept{return indices_/3;}
     std::uint64_t residentBytes()const noexcept{return vertex_.allocationBytes+index_.allocationBytes+vertexDevice_.allocationBytes+indexDevice_.allocationBytes;}
-    std::uint64_t graphicsResidentBytes()const noexcept{return residentBytes()+materials_.allocationBytes+shadow_.allocationBytes+msaaColor_.allocationBytes+depthAllocationBytes_+uniforms_.allocationBytes+textureStaging_.allocationBytes;}
+    std::uint64_t graphicsResidentBytes()const noexcept{return residentBytes()+materials_.allocationBytes+shadow_.allocationBytes+msaaColor_.allocationBytes+depthAllocationBytes_+uniforms_.allocationBytes+textureStaging_.allocationBytes+glyphs_.allocationBytes+glyphStaging_.allocationBytes+uiVertices_.allocationBytes+uiIndices_.allocationBytes+macro_.allocationBytes+macroStaging_.allocationBytes;}
+    std::uint64_t interfaceBytes()const noexcept{return uiBytes_;}
+    std::uint64_t macroBytes()const noexcept{return macroBytes_;}
+    std::uint32_t macroResolution()const noexcept{return macroResolution_;}
     std::uint32_t shadowMapSize()const noexcept{return shadowSize_;}
     std::uint32_t sampleCount()const noexcept{return std::uint32_t(samples_);}
     std::uint32_t materialCount()const noexcept{return materialCount_;}

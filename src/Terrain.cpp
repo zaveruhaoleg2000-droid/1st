@@ -8,6 +8,7 @@
 #include <limits>
 #include <stdexcept>
 #include <utility>
+#include <chrono>
 
 namespace gz {
 namespace {
@@ -115,6 +116,16 @@ bool HeightMap::generate(TerrainSectorId sector) {
     return true;
 }
 
+bool HeightMap::generate(TerrainSectorId sector,const WorldSettings& settings){
+    if(!settings.valid())return false;
+    if(!settings.version)return generate(sector);
+    sector_=sector;values_.resize(kPixelCount);
+    for(int z=0;z<kTerrainSamples;++z)for(int x=0;x<kTerrainSamples;++x){
+        const double wx=double(sector.x)*kTerrainSectorSize+double(x)*kTerrainCellSize;
+        const double wz=double(sector.z)*kTerrainSectorSize+double(z)*kTerrainCellSize;
+        values_[std::size_t(z)*kTerrainSamples+x]=std::int16_t(std::clamp(std::lround(TerrainGenerator::height(wx,wz,settings)*10.),-32768L,32767L));
+    }return true;
+}
 std::int16_t HeightMap::pixel(std::size_t x,std::size_t z) const {
     if(x>=kTerrainSamples||z>=kTerrainSamples||values_.size()!=kPixelCount)throw std::out_of_range("Terrain pixel");
     return values_[z*kTerrainSamples+x];
@@ -227,7 +238,7 @@ HeightMap& TerrainWorld::acquire(TerrainSectorId id) {
     if(cache_.size()>=maxCached_)cache_.pop_back();
     cache_.emplace_front();cache_.front().id=id;
     bool loaded=false;
-    if(!directory_.empty()){
+    if(!directory_.empty()&&!settings_.version){
         const auto name=std::to_string(id.x)+"_"+std::to_string(id.z);
         const auto image=(std::filesystem::path(directory_)/(name+".pgm")).string();
         const auto packed=(std::filesystem::path(directory_)/(name+".gzt")).string();
@@ -238,10 +249,50 @@ HeightMap& TerrainWorld::acquire(TerrainSectorId id) {
         }
     }
     if(loaded)++diskLoads_;
-    else{ cache_.front().map.generate(id);++generationCount_; }
+    else{ cache_.front().map.generate(id,settings_);++generationCount_; }
     return cache_.front().map;
 }
-float TerrainWorld::heightAt(double x,double z) {return acquire(sectorAt(x,z)).sample(float(x),float(z));}
+float TerrainWorld::heightAt(double x,double z) {
+    if(!settings_.version)return acquire(sectorAt(x,z)).sample(float(x),float(z));
+    const auto id=sectorAt(x,z);
+    for(auto it=cache_.begin();it!=cache_.end();++it)if(it->id==id){cache_.splice(cache_.begin(),cache_,it);return cache_.front().map.sample(float(x),float(z));}
+    prefetchSector(id);
+    // Quantized grid sampling matches the background heightmap while it is still being generated.
+    const float xf=std::clamp(float((double(float(x))-double(id.x)*kTerrainSectorSize)/kTerrainCellSize),0.f,float(kTerrainCells));
+    const float zf=std::clamp(float((double(float(z))-double(id.z)*kTerrainSectorSize)/kTerrainCellSize),0.f,float(kTerrainCells));
+    const int ix=std::min(int(xf),kTerrainCells-1),iz=std::min(int(zf),kTerrainCells-1);
+    const float tx=xf-ix,tz=zf-iz;
+    auto h=[&](int gx,int gz){return float(std::clamp(std::lround(TerrainGenerator::height(double(id.x)*kTerrainSectorSize+gx*double(kTerrainCellSize),double(id.z)*kTerrainSectorSize+gz*double(kTerrainCellSize),settings_)*10.),-32768L,32767L))*.1f;};
+    const float a=h(ix,iz)*(1-tx)+h(ix+1,iz)*tx,b=h(ix,iz+1)*(1-tx)+h(ix+1,iz+1)*tx;
+    return a*(1-tz)+b*tz;
+}
+void TerrainWorld::setGenerator(WorldSettings settings){
+    if(!settings.valid()||settings==settings_)return;
+    settings_=settings;cache_.clear();++contentRevision_;
+}
+bool TerrainWorld::prefetchSector(TerrainSectorId id){
+    if(!settings_.version||!pending_.empty())return false;
+    for(const auto& entry:cache_)if(entry.id==id)return false;
+    const auto settings=settings_;const auto directory=generatedCacheDirectory_;
+    pending_.push_back({id,settings,std::async(std::launch::async,[id,settings,directory]{
+        HeightMap map;
+        const auto filename=std::to_string(settings.seed)+"_v"+std::to_string(settings.version)+"_r"+std::to_string(std::uint32_t(settings.region))+"_"+std::to_string(id.x)+"_"+std::to_string(id.z)+".gzt";
+        const auto path=std::filesystem::path(directory)/filename;
+        if(!directory.empty()&&map.loadBinary(path.string())&&map.sector()==id)return map;
+        map.generate(id,settings);
+        if(!directory.empty()){std::error_code ec;std::filesystem::create_directories(directory,ec);
+            const auto temp=path.string()+".tmp";
+            if(!ec&&map.saveBinary(temp)){std::filesystem::rename(temp,path,ec);if(ec)std::filesystem::remove(temp,ec);}}
+        return map;
+    })});return true;
+}
+void TerrainWorld::pollGenerated(){
+    if(pending_.empty()||pending_.front().future.wait_for(std::chrono::seconds(0))!=std::future_status::ready)return;
+    auto map=pending_.front().future.get();const auto settings=pending_.front().settings;const auto id=pending_.front().id;pending_.clear();
+    if(settings!=settings_)return;
+    for(const auto& entry:cache_)if(entry.id==id)return;
+    if(cache_.size()>=maxCached_)cache_.pop_back();cache_.push_front({id,std::move(map)});++generationCount_;
+}
 float TerrainWorld::slopeAt(double x,double z) {
     constexpr double step=6.;
     const float dx=(heightAt(x+step,z)-heightAt(x-step,z))/(2*float(step));

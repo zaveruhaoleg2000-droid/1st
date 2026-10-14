@@ -10,6 +10,7 @@
 #include "gz/RenderBackend.hpp"
 #include "gz/NativeScene.hpp"
 #include "gz/Diagnostics.hpp"
+#include "gz/TacticalHud.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -34,6 +35,10 @@ struct Game {
     gz::RenderBackendHost* backend=nullptr;
     gz::FrameMeter meter;
     gz::DebugHud debugHud;
+    gz::TacticalHud tacticalHud;
+    gz::TerrainAppearance terrainAppearance;
+    gz::TerrainWorld* nativeTerrain=nullptr;
+    int gpuQuality=2;
     bool showDiagnostics=false;
     bool sound=true;
     gz::Camera camera;
@@ -48,7 +53,7 @@ struct Game {
         if(!scenarios.loadDirectory("assets/scenarios"))throw std::runtime_error("Missing campaign scenario files");
         render.resize(640,400); // 1.5x upscale in X11: keeps CPU fallback usable
         render.setTerrainDirectory("assets/terrain");
-        debugHud.load("assets/ui/glyphs.pgm");
+        debugHud.load("assets/ui/glyphs.pgm");tacticalHud.loadFont("assets/ui/glyphs.pgm");
         render.loadTextures("assets/textures/runtime",128);
         render.setShaderQuality(gz::ShaderQuality::Eco);
         if(!menuScene.load("assets/europe/europe_vertices.gzm","assets/ui/glyphs.pgm","assets/ui/advances.bin"))
@@ -63,8 +68,8 @@ struct Game {
     }
     void load(){
         bool ok=campaign.loadSlot(slot(0),sim,scenarios);
-        if(!ok && sim.load(slot(0))){if(auto* sc=scenarios.at(0))campaign.begin(*sc,sim);ok=true;}
-        if(ok){selected=sim.controlledSquad();turnsRemaining=0;camera={};menu.page=gz::MenuPage::Playing;audio.play(gz::SoundCue::Confirm);}
+        if(!ok && sim.load(slot(0))){if(auto* sc=scenarios.at(0))campaign.begin(*sc,sim);campaign.setWorldSettings({});ok=true;}
+        if(ok){applyWorld();selected=sim.controlledSquad();turnsRemaining=0;camera={};menu.page=gz::MenuPage::Playing;audio.play(gz::SoundCue::Confirm);}
         else audio.play(gz::SoundCue::Back);
     }
     void strength(int change){
@@ -72,6 +77,7 @@ struct Game {
         const int current=int(c.strength);
         if(campaign.chooseDetachment(std::uint32_t(std::clamp(current+change,24,96))))audio.play(gz::SoundCue::Hover);
     }
+    void applyWorld(){if(nativeTerrain)nativeTerrain->setGenerator(campaign.active()?campaign.state().world:gz::WorldSettings{});render.setWorldSettings(campaign.active()?campaign.state().world:gz::WorldSettings{});}
     void launch(){
         if(campaign.launchContract(sim)){
             camera={};selected=0;turnsRemaining=0;paused=false;
@@ -90,16 +96,16 @@ struct Game {
         case gz::MenuAction::NewGame:
         case gz::MenuAction::StartScenario1:case gz::MenuAction::StartScenario2:case gz::MenuAction::StartScenario3:{
             const int i=a==gz::MenuAction::NewGame?0:int(a)-int(gz::MenuAction::StartScenario1);
-            if(const auto* sc=scenarios.at(std::size_t(i))){sim.newOperation(64);campaign.begin(*sc,sim);selected=0;camera={};turnsRemaining=0;sim.setMode(gz::ViewMode::GlobalAI);applyWeather();audio.play(gz::SoundCue::Radio);}
+            if(const auto* sc=scenarios.at(std::size_t(i))){sim.newOperation(64);campaign.begin(*sc,sim);applyWorld();selected=0;camera={};turnsRemaining=0;sim.setMode(gz::ViewMode::GlobalAI);applyWeather();audio.play(gz::SoundCue::Radio);}
             break;
         }
         case gz::MenuAction::LoadSlot1:case gz::MenuAction::LoadSlot2:case gz::MenuAction::LoadSlot3:
             {
                 const int i=int(a)-int(gz::MenuAction::LoadSlot1);
                 bool ok=campaign.loadSlot(slot(i),sim,scenarios);
-                if(!ok && sim.load(slot(i))){if(const auto* sc=scenarios.at(0))campaign.begin(*sc,sim);ok=true;}
+                if(!ok && sim.load(slot(i))){if(const auto* sc=scenarios.at(0))campaign.begin(*sc,sim);campaign.setWorldSettings({});ok=true;}
                 if(!ok){menu.page=gz::MenuPage::Load;refreshSaves();audio.play(gz::SoundCue::Back);}
-                else{selected=sim.controlledSquad();camera={};turnsRemaining=0;audio.play(gz::SoundCue::Confirm);}
+                else{applyWorld();selected=sim.controlledSquad();camera={};turnsRemaining=0;audio.play(gz::SoundCue::Confirm);}
             }break;
         case gz::MenuAction::SettingsChanged:applyEffects();audio.play(gz::SoundCue::Hover);break;
         case gz::MenuAction::Exit:running=false;break;
@@ -169,9 +175,29 @@ struct Game {
         if(sim.mode()==gz::ViewMode::Direct){auto& s=sim.soldier(sim.controlledSoldier());sim.moveCommander(s.x+dx*18,s.z+dz*18);}
         else{camera.focusX+=dx*75;camera.focusZ+=dz*75;}
     }
+    bool hudCommand(gz::HudCommand c){
+        switch(c.action){
+        case gz::HudAction::Pause:paused=!paused;break;
+        case gz::HudAction::ToggleTurns:turnBased=!turnBased;break;
+        case gz::HudAction::NextTurn:if(turnBased&&!paused)turnsRemaining=50;break;
+        case gz::HudAction::Hold:sim.setHoldPosition(selected,true);break;
+        case gz::HudAction::Map:sim.setMode(gz::ViewMode::GlobalAI);break;
+        case gz::HudAction::Deploy:launch();break;
+        case gz::HudAction::Repeat:campaign.repeatContract();sim.setMode(gz::ViewMode::GlobalAI);break;
+        case gz::HudAction::Select:selected=unsigned(c.argument);sim.selectControlledSquad(selected);break;
+        case gz::HudAction::Focus:camera.focusX=c.worldX;camera.focusZ=c.worldZ;break;
+        case gz::HudAction::Quality:gpuQuality=(gpuQuality+1)%3;setenv("GZ_GPU_QUALITY",gpuQuality==0?"low":gpuQuality==1?"medium":"high",1);backend->resize(960,600);break;
+        default:return false;
+        }return true;
+    }
     void mouse(unsigned btn,int x,int y){
         if(menu.page!=gz::MenuPage::Playing){if(btn==Button1){int row=gz::MenuState::hitRow(x,y,960,600);if(row>=0)action(menu.activate(row));}return;}
-        x=x*render.width()/960;y=y*render.height()/600;
+        const bool native=backend&&backend->nativeSceneReady()&&nativeTerrain&&sim.mode()!=gz::ViewMode::GlobalAI;
+        if(native&&!render.photoMode()){
+            if(btn==Button1&&hudCommand(tacticalHud.hit(float(x),float(y))))return;
+            if(tacticalHud.contains(float(x),float(y)))return;
+        }
+        if(!native){x=x*render.width()/960;y=y*render.height()/600;}
         if(btn==Button1&&sim.mode()==gz::ViewMode::GlobalAI){
             if(render.selectGlobalAt(x,y))audio.play(gz::SoundCue::Hover);
             return;
@@ -180,7 +206,18 @@ struct Game {
             const float f=btn==Button4?.84f:1.20f;
             if(sim.mode()==gz::ViewMode::GlobalAI){zoom=std::clamp(zoom/f,.7f,3.f);render.setGlobalMapView(zoom,panX,panY);}
             else camera.distance=std::clamp(camera.distance*f,sim.mode()==gz::ViewMode::Direct?15.f:350.f,sim.mode()==gz::ViewMode::Direct?90.f:3500.f);
-        }else if(btn==Button3 && sim.mode()!=gz::ViewMode::GlobalAI){float wx=0,wz=0;render.prepareCamera(camera);if(render.screenToGround(camera,x,y,wx,wz))sim.orderSquad(selected,wx,wz);}
+        }else if(btn==Button3 && sim.mode()!=gz::ViewMode::GlobalAI){float wx=0,wz=0;render.prepareCamera(camera);
+            const auto gpuCamera=gz::makeGpuSceneCamera(camera,nativeTerrain?nativeTerrain->heightAt(camera.focusX,camera.focusZ):0,atmosphere);
+            const bool hit=native?gz::pickGpuTerrain(gpuCamera,*nativeTerrain,960,600,float(x),float(y),wx,wz):render.screenToGround(camera,x,y,wx,wz);
+            if(hit){if(sim.mode()==gz::ViewMode::Direct)sim.moveCommander(wx,wz);else sim.orderSquad(selected,wx,wz);}
+        }else if(btn==Button1&&native){
+            const auto frame=gz::makeGpuFrameConstants(gz::makeGpuSceneCamera(camera,nativeTerrain->heightAt(camera.focusX,camera.focusZ),atmosphere),960,600,0);
+            float best=900;
+            for(std::size_t i=0;i<sim.soldierCount();++i){const auto& soldier=sim.soldier(i);if(soldier.health<=0||sim.squad(soldier.squad).side!=gz::Side::Player)continue;
+                float px=0,py=0;if(gz::projectGpuPoint(frame,960,600,float(soldier.x),nativeTerrain->heightAt(soldier.x,soldier.z)+(camera.distance<650?1.f:16.f),float(soldier.z),px,py)){
+                    const float distance=(px-x)*(px-x)+(py-y)*(py-y);if(distance<best){best=distance;selected=soldier.squad;sim.selectControlledSquad(selected);}}
+            }
+        }
     }
     void tick(){
         if(menu.page!=gz::MenuPage::Playing||paused||!campaign.active()||campaign.state().contract.stage!=gz::ContractStage::Engaged)return;
@@ -237,7 +274,7 @@ int main(int argc,char**argv){
     std::cerr<<"Graphics backend: "<<gz::graphicsAPIName(graphic.activeAPI())
              <<"; native indexed geometry pass is enabled only with Vulkan + SPIR-V shaders\n";
     Game game;game.backend=&graphic;if(!smoke)game.audio.start();auto start=Clock::now(),lastUpdate=Clock::now();int frames=0;
-    gz::TerrainWorld gpuTerrain(8);gpuTerrain.setTileDirectory("assets/terrain");
+    gz::TerrainWorld gpuTerrain(8);gpuTerrain.setTileDirectory("assets/terrain");game.nativeTerrain=&gpuTerrain;gpuTerrain.setGeneratedCacheDirectory("saves/terrain_cache");
     gz::SceneMeshBuilder gpuBuilder;gz::SceneMesh gpuMesh;
     std::cerr<<"Native Vulkan mesh pass: "<<(graphic.nativeSceneReady()?"available":"not available; CPU fallback")<<"\n";
     while(game.running){
@@ -251,6 +288,7 @@ int main(int argc,char**argv){
       if(!game.running)break;
       auto now=Clock::now();float t=std::chrono::duration<float>(now-start).count();
       if(std::chrono::duration<double>(now-lastUpdate).count()>=.10){game.tick();lastUpdate=now;}
+      gpuTerrain.pollGenerated();game.render.pollTerrain();
       const auto frameStart=Clock::now();
       const bool nativeTactical=graphic.nativeSceneReady() && game.menu.page==gz::MenuPage::Playing &&
           game.sim.mode()!=gz::ViewMode::GlobalAI;
@@ -269,8 +307,10 @@ int main(int argc,char**argv){
       submission.fallbackFrame={src,sourceWidth,sourceHeight,sourceWidth,gz::PixelFormat::BGRA8};
       submission.simulationTick=game.sim.stats().tick;submission.visualTimeSeconds=t;
       if(nativeTactical){
-          submission.worldMesh=gz::makeGeometryView(gpuMesh);
+          game.terrainAppearance.update(gpuTerrain.generatorSettings(),game.camera.focusX,game.camera.focusZ,game.gpuQuality==2?4096:game.gpuQuality==1?2048:1024);
+          submission.worldMesh=gz::makeGeometryView(gpuMesh);submission.terrainMacro=game.terrainAppearance.view();
           submission.camera=gz::makeGpuSceneCamera(game.camera,gpuTerrain.heightAt(game.camera.focusX,game.camera.focusZ),game.atmosphere,game.render.effects());
+          if(!game.render.photoMode()){game.tacticalHud.build(game.sim,gpuTerrain,game.camera,game.campaign.active()?&game.campaign.state():nullptr,int(game.selected),w,h,game.paused,game.turnBased,game.gpuQuality,game.terrainAppearance.loading());submission.interfaceMesh=game.tacticalHud.geometry();}
       }
       const bool gpuPresented=graphic.submit(submission);
       if(!gpuPresented && nativeTactical){
@@ -285,7 +325,7 @@ int main(int argc,char**argv){
         }
       }else if(!gpuPresented)std::memcpy(img->data,src,std::size_t(w)*h*4);
       if(!gpuPresented)XPutImage(display,window,gc,img,0,0,0,0,w,h);
-      if(game.menu.page==gz::MenuPage::Playing&&!game.render.photoMode()){
+      if(game.menu.page==gz::MenuPage::Playing&&!game.render.photoMode()&&!nativeTactical){
         XSetForeground(display,gc,BlackPixel(display,screen));
         XFillRectangle(display,window,gc,0,0,w,23);
         XSetForeground(display,gc,WhitePixel(display,screen));

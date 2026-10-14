@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <fstream>
 #include <vector>
 
 namespace gz {
@@ -87,7 +88,7 @@ bool VulkanScenePass::makeMaterials(std::string& error){
     VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     sampler.magFilter=sampler.minFilter=VK_FILTER_LINEAR;sampler.mipmapMode=VK_SAMPLER_MIPMAP_MODE_LINEAR;
     sampler.addressModeU=sampler.addressModeV=sampler.addressModeW=VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sampler.maxLod=float(levels-1);sampler.anisotropyEnable=features.samplerAnisotropy;
+    sampler.maxLod=VK_LOD_CLAMP_NONE;sampler.anisotropyEnable=features.samplerAnisotropy;
     sampler.maxAnisotropy=features.samplerAnisotropy?std::min(8.f,properties.limits.maxSamplerAnisotropy):1.f;
     if(vkCreateSampler(device_,&sampler,nullptr,&materialSampler_)!=VK_SUCCESS){error="Material sampler creation failed";return false;}
     texturesPending_=true;return true;
@@ -131,34 +132,88 @@ bool VulkanScenePass::makeShadow(std::string& error){
     if(vkCreateSampler(device_,&sampler,nullptr,&shadowSampler_)!=VK_SUCCESS){error="Shadow sampler creation failed";return false;}
     return true;
 }
+bool VulkanScenePass::makeInterface(std::string& error){
+    std::ifstream in("assets/ui/glyphs.pgm",std::ios::binary);std::string magic;int w=0,h=0,maximum=0;
+    if(!(in>>magic>>w>>h>>maximum)||magic!="P5"||maximum!=255||w<=0||h<=0||w>2048||h>2048){error="Interface glyph atlas missing or invalid";return false;}
+    in.get();std::vector<std::uint8_t> pixels(std::size_t(w)*h);in.read(reinterpret_cast<char*>(pixels.data()),std::streamsize(pixels.size()));
+    if(!in){error="Interface atlas truncated";return false;}
+    glyphExtent_={std::uint32_t(w),std::uint32_t(h)};
+    if(!makeImage(glyphs_,VK_FORMAT_R8_UNORM,std::uint32_t(w),std::uint32_t(h),1,1,VK_SAMPLE_COUNT_1_BIT,
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT,VK_IMAGE_ASPECT_COLOR_BIT,error)||!makeBuffer(glyphStaging_,pixels.size(),VK_BUFFER_USAGE_TRANSFER_SRC_BIT,error))return false;
+    std::memcpy(glyphStaging_.mapped,pixels.data(),pixels.size());
+    if(!glyphStaging_.coherent){VkMappedMemoryRange flush{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};flush.memory=glyphStaging_.memory;flush.size=VK_WHOLE_SIZE;
+        if(vkFlushMappedMemoryRanges(device_,1,&flush)!=VK_SUCCESS){error="Interface atlas flush failed";return false;}}
+    return true;
+}
+bool VulkanScenePass::prepareMacro(const TerrainMacroView& data,std::string& error){
+    macroBytes_=0;
+    if(macro_.image&&(!data.valid()||(data.revision!=0&&data.revision==macroRevision_)))return true;
+    const std::uint32_t resolution=data.valid()?data.resolution:1;
+    std::size_t expected=0;std::uint32_t levels=0;
+    for(auto side=resolution;side;side/=2){expected+=std::size_t(side)*side*4;++levels;}
+    if(data.valid()&&data.bytes!=expected){error="Terrain macro mip data size invalid";return false;}
+    destroyImage(macro_);destroyBuffer(macroStaging_);macroCopies_.clear();
+    if(!makeImage(macro_,VK_FORMAT_R8G8B8A8_SRGB,resolution,resolution,levels,1,VK_SAMPLE_COUNT_1_BIT,
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT,VK_IMAGE_ASPECT_COLOR_BIT,error)||
+       !makeBuffer(macroStaging_,expected,VK_BUFFER_USAGE_TRANSFER_SRC_BIT,error))return false;
+    if(data.valid())std::memcpy(macroStaging_.mapped,data.pixels,expected);else std::memset(macroStaging_.mapped,255,expected);
+    if(!macroStaging_.coherent){VkMappedMemoryRange flush{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};flush.memory=macroStaging_.memory;flush.size=VK_WHOLE_SIZE;
+        if(vkFlushMappedMemoryRanges(device_,1,&flush)!=VK_SUCCESS){error="Terrain macro flush failed";return false;}}
+    std::size_t offset=0;std::uint32_t level=0;
+    for(auto side=resolution;side;side/=2){VkBufferImageCopy copy{};copy.bufferOffset=offset;copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,level++,0,1};copy.imageExtent={side,side,1};
+        macroCopies_.push_back(copy);offset+=std::size_t(side)*side*4;}
+    macroRevision_=data.valid()?data.revision:0;macroResolution_=data.valid()?resolution:0;
+    macroPending_=true;macroBytes_=data.valid()?expected:0;
+    if(descriptor_){
+        VkDescriptorImageInfo image{materialSampler_,macro_.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};write.dstSet=descriptor_;write.dstBinding=4;write.descriptorCount=1;write.descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;write.pImageInfo=&image;
+        vkUpdateDescriptorSets(device_,1,&write,0,nullptr);
+    }return true;
+}
+void VulkanScenePass::recordMacro(VkCommandBuffer cmd){
+    if(!macroPending_)return;
+    VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};barrier.image=macro_.image;
+    barrier.srcQueueFamilyIndex=barrier.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+    barrier.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,std::uint32_t(macroCopies_.size()),0,1};
+    barrier.oldLayout=VK_IMAGE_LAYOUT_UNDEFINED;barrier.newLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;barrier.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,0,nullptr,1,&barrier);
+    vkCmdCopyBufferToImage(cmd,macroStaging_.buffer,macro_.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,std::uint32_t(macroCopies_.size()),macroCopies_.data());
+    barrier.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;barrier.newLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,0,0,nullptr,0,nullptr,1,&barrier);macroPending_=false;
+}
 bool VulkanScenePass::makeDescriptors(std::string& error){
     if(!makeBuffer(uniforms_,sizeof(GpuFrameConstants),VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,error))return false;
-    const std::array<VkDescriptorSetLayoutBinding,3> bindings{{
+    const std::array<VkDescriptorSetLayoutBinding,5> bindings{{
         {0,VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1,VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},
         {1,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},
-        {2,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr}
+        {2,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},
+        {3,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},
+        {4,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr}
     }};
     VkDescriptorSetLayoutCreateInfo layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    layout.bindingCount=3;layout.pBindings=bindings.data();
+    layout.bindingCount=5;layout.pBindings=bindings.data();
     if(vkCreateDescriptorSetLayout(device_,&layout,nullptr,&descriptorLayout_)!=VK_SUCCESS){error="Native descriptor layout creation failed";return false;}
-    const std::array<VkDescriptorPoolSize,2> sizes{{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1},{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,2}}};
+    const std::array<VkDescriptorPoolSize,2> sizes{{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1},{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,4}}};
     VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};pool.maxSets=1;pool.poolSizeCount=2;pool.pPoolSizes=sizes.data();
     if(vkCreateDescriptorPool(device_,&pool,nullptr,&descriptorPool_)!=VK_SUCCESS){error="Native descriptor pool creation failed";return false;}
     VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
     allocation.descriptorPool=descriptorPool_;allocation.descriptorSetCount=1;allocation.pSetLayouts=&descriptorLayout_;
     if(vkAllocateDescriptorSets(device_,&allocation,&descriptor_)!=VK_SUCCESS){error="Native descriptor allocation failed";return false;}
     VkDescriptorBufferInfo buffer{uniforms_.buffer,0,sizeof(GpuFrameConstants)};
-    const std::array<VkDescriptorImageInfo,2> images{{
+    const std::array<VkDescriptorImageInfo,4> images{{
         {materialSampler_,materials_.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-        {shadowSampler_,shadow_.view,VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL}
+        {shadowSampler_,shadow_.view,VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL},
+        {materialSampler_,glyphs_.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+        {materialSampler_,macro_.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}
     }};
-    std::array<VkWriteDescriptorSet,3> writes{};
-    for(std::uint32_t i=0;i<3;++i){
+    std::array<VkWriteDescriptorSet,5> writes{};
+    for(std::uint32_t i=0;i<5;++i){
         auto& w=writes[i];w.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;w.dstSet=descriptor_;w.dstBinding=i;w.descriptorCount=1;
         w.descriptorType=i?VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         if(i)w.pImageInfo=&images[i-1];else w.pBufferInfo=&buffer;
     }
-    vkUpdateDescriptorSets(device_,3,writes.data(),0,nullptr);return true;
+    vkUpdateDescriptorSets(device_,5,writes.data(),0,nullptr);return true;
 }
 void VulkanScenePass::recordTextures(VkCommandBuffer cmd){
     if(!texturesPending_)return;
@@ -172,6 +227,13 @@ void VulkanScenePass::recordTextures(VkCommandBuffer cmd){
         std::uint32_t(textureCopies_.size()),textureCopies_.data());
     barrier.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;barrier.newLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     barrier.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,0,0,nullptr,0,nullptr,1,&barrier);
+    barrier.image=glyphs_.image;barrier.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+    barrier.oldLayout=VK_IMAGE_LAYOUT_UNDEFINED;barrier.newLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;barrier.srcAccessMask=0;barrier.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,0,nullptr,1,&barrier);
+    VkBufferImageCopy glyphCopy{};glyphCopy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};glyphCopy.imageExtent={glyphExtent_.width,glyphExtent_.height,1};
+    vkCmdCopyBufferToImage(cmd,glyphStaging_.buffer,glyphs_.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&glyphCopy);
+    barrier.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;barrier.newLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;barrier.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_SHADER_READ_BIT;
     vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,0,0,nullptr,0,nullptr,1,&barrier);
     texturesPending_=false;
 }

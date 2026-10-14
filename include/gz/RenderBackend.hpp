@@ -5,6 +5,7 @@
 #include <string>
 #include <string_view>
 #include "gz/GpuSceneMath.hpp"
+#include "gz/TerrainAppearance.hpp"
 
 namespace gz {
 // Render Hardware Interface v1. No OS/Vulkan/DirectX headers cross this boundary.
@@ -51,6 +52,8 @@ struct RenderSubmission {
     std::uint64_t simulationTick=0;
     float visualTimeSeconds=0;
     GpuSceneCamera camera{};
+    GeometryView interfaceMesh{};
+    TerrainMacroView terrainMacro{};
 };
 struct GraphicsLimits {
     // Target profile: 4 CPU threads, 4 GiB RAM, 2 GiB video memory.
@@ -71,6 +74,8 @@ struct RenderTelemetry {
     std::uint64_t graphicsResidentBytes=0;
     std::uint32_t materialTextureCount=0,shadowMapSize=0,msaaSamples=1;
     std::uint64_t validationErrors=0;
+    std::uint64_t interfaceUploadedBytes=0,terrainTextureUploadedBytes=0;
+    std::uint32_t terrainTextureResolution=0;
 };
 class IRenderBackend {
 public:

@@ -183,8 +183,8 @@ std::uint32_t Renderer::waterColor(float x,float z) const {
   // Coherent 2-wave ripples; avoid textures, offscreen reflection passes and allocations.
   float wave=std::sin(z*.033f+x*.016f+t*.75f)*.48f
             +std::sin(z*.084f-x*.038f-t*1.32f)*.22f;
-  float offset=x-riverCenter(z);
-  float edge=std::clamp(std::abs(offset)/std::max(1.f,riverWidth(z)),0.f,1.f);
+  float offset=x-TerrainGenerator::riverCenter(z,terrain_.generatorSettings());
+  float edge=std::clamp(std::abs(offset)/std::max(1.f,TerrainGenerator::riverWidth(z,terrain_.generatorSettings())),0.f,1.f);
   auto deep=mix(rgb(25,70,87),rgb(62,121,143),.42f+.14f*wave);
   const auto budget=shaderBudget(shaderQuality_);
   if(!effects_.waterReflections || !budget.waterHighlights)
@@ -372,9 +372,9 @@ void Renderer::drawRiver(const Camera& camera){
   // A simple frustum-distance cull keeps the draw independent of map size.
   int count=0;
   for(float z=z0;z<z1 && count<400;z+=24.f,++count){
-    float zn=std::min(z+24.f,z1),cx=riverCenter(z),cn=riverCenter(zn);
+    float zn=std::min(z+24.f,z1),cx=TerrainGenerator::riverCenter(z,terrain_.generatorSettings()),cn=TerrainGenerator::riverCenter(zn,terrain_.generatorSettings());
     if(std::min(std::abs(cx-camera.focusX),std::abs(cn-camera.focusX))>span+250.f)continue;
-    float r=riverWidth(z),rn=riverWidth(zn),y=riverLevel(z)+.35f,yn=riverLevel(zn)+.35f;
+    float r=TerrainGenerator::riverWidth(z,terrain_.generatorSettings()),rn=TerrainGenerator::riverWidth(zn,terrain_.generatorSettings()),y=terrain_.generatorSettings().version?terrain_.heightAt(cx,z)+.8f:riverLevel(z)+.35f,yn=terrain_.generatorSettings().version?terrain_.heightAt(cn,zn)+.8f:riverLevel(zn)+.35f;
     Vec3 a{cx-r,y,z},b{cx+r,y,z},c{cn+rn,yn,zn},d{cn-rn,yn,zn};
     triangle(a,b,c,rgb(45,99,126),Surface::Water);
     triangle(a,c,d,rgb(45,99,126),Surface::Water);

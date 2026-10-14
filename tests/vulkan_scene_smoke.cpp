@@ -1,5 +1,6 @@
 #include "TestCheck.hpp"
 #include "gz/NativeScene.hpp"
+#include "gz/TacticalHud.hpp"
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <chrono>
@@ -26,7 +27,8 @@ static std::vector<unsigned long> capture(Display* display,Window window,int wid
 }
 int main(){
     XInitThreads();auto* display=XOpenDisplay(nullptr);GZ_CHECK(display);
-    const bool gallery=std::getenv("GZ_VISUAL_CAPTURE")!=nullptr;
+    const bool review=std::getenv("GZ_REVIEW_CAPTURE")!=nullptr;
+    const bool gallery=review||std::getenv("GZ_VISUAL_CAPTURE")!=nullptr;
     const int width=gallery?1280:320,height=gallery?720:240;
     const auto window=XCreateSimpleWindow(display,DefaultRootWindow(display),0,0,width,height,0,0,0);
     XMapWindow(display,window);XSync(display,False);
@@ -37,9 +39,15 @@ int main(){
     gz::Simulation sim(2);sim.newOperation(96);
     gz::TerrainWorld terrain(9);terrain.setTileDirectory("assets/terrain");
     gz::Camera camera;camera.focusX=3000;camera.focusZ=1250;camera.distance=900;
+    gz::Campaign reviewCampaign;gz::ScenarioCatalog reviewScenarios;
+    if(review){GZ_CHECK(reviewScenarios.loadDirectory("assets/scenarios"));reviewCampaign.begin(*reviewScenarios.at(0),sim);GZ_CHECK(reviewCampaign.launchContract(sim));terrain.setGenerator(reviewCampaign.state().world);}
     gz::SceneMesh mesh;gz::SceneMeshBuilder builder;
     gz::AtmosphereSettings atmosphere{};
     float visualTime=7;
+    gz::TacticalHud hud;GZ_CHECK(hud.loadFont("assets/ui/glyphs.pgm"));bool showHud=false;
+    std::shared_ptr<gz::TerrainMacroData> reviewMacro;
+    if(review)reviewMacro=gz::TerrainAppearance::generate(terrain.generatorSettings(),-1024,-2048,4096);
+    gz::TerrainMacroView macroView=reviewMacro?reviewMacro->view():gz::TerrainMacroView{};
     std::vector<std::uint32_t> sentinel(width*height,0xffff00ffu);
     auto submit=[&](){
         builder.build(mesh,terrain,sim,camera,0,atmosphere);
@@ -47,7 +55,8 @@ int main(){
         frame.fallbackFrame={sentinel.data(),width,height,width,gz::PixelFormat::BGRA8};
         frame.worldMesh=gz::makeGeometryView(mesh);
         frame.camera=gz::makeGpuSceneCamera(camera,terrain.heightAt(camera.focusX,camera.focusZ),atmosphere);
-        frame.visualTimeSeconds=visualTime;
+        frame.visualTimeSeconds=visualTime;frame.terrainMacro=macroView;
+        if(showHud){hud.build(sim,terrain,camera,review?&reviewCampaign.state():nullptr,0,width,height,false,true);frame.interfaceMesh=hud.geometry();}
         GZ_CHECK(host.submit(frame));GZ_CHECK(host.activeAPI()==gz::GraphicsAPI::Vulkan);
     };
     submit();const auto first=host.telemetry().meshUploadedBytes;
@@ -71,7 +80,7 @@ int main(){
     GZ_CHECK(host.telemetry().meshResidentBytes<=128u*1024u*1024u);
     GZ_CHECK(host.telemetry().validationErrors==0);
     GZ_CHECK(host.telemetry().materialTextureCount==16);
-    GZ_CHECK(host.telemetry().graphicsResidentBytes<256u*1024u*1024u);
+    GZ_CHECK(host.telemetry().graphicsResidentBytes<(review?512u:256u)*1024u*1024u);
     std::cout<<"Native Vulkan: 13 frames, first upload="<<first<<" bytes, unit update="<<delta
         <<" bytes, skipped="<<host.telemetry().skippedMeshUploads
         <<", resident="<<host.telemetry().meshResidentBytes<<" bytes; actual X11 native frames captured; validation errors=0\n";
@@ -98,5 +107,25 @@ int main(){
     std::cout<<"Native material/weather gallery: "<<host.telemetry().materialTextureCount<<" textures; "
         <<host.telemetry().shadowMapSize<<"px shadow map; MSAA "<<host.telemetry().msaaSamples
         <<"x; graphics allocations="<<host.telemetry().graphicsResidentBytes<<" bytes; validation errors=0\n";
+    const auto macro=gz::TerrainAppearance::generate(terrain.generatorSettings(),-1024,-2048,256,2);
+    macroView=macro->view();const auto uploaded=host.telemetry().terrainTextureUploadedBytes;
+    submit();GZ_CHECK(host.telemetry().terrainTextureResolution==256 && host.telemetry().terrainTextureUploadedBytes>uploaded);
+    const auto afterMacro=host.telemetry().terrainTextureUploadedBytes;submit();GZ_CHECK(host.telemetry().terrainTextureUploadedBytes==afterMacro);
+    showHud=true;submit();
+    const auto withHud=capture(display,window,width,height,"test_build_vulkan_hud.ppm");
+    GZ_CHECK(host.telemetry().interfaceUploadedBytes>0);
+    GZ_CHECK(host.telemetry().validationErrors==0);
+    GZ_CHECK(withHud!=water);
+    if(review){
+        macroView=reviewMacro->view();camera.focusX=3000;camera.focusZ=1250;camera.distance=700;camera.pitch=.70f;camera.yaw=.35f;atmosphere={};submit();
+        capture(display,window,width,height,"test_build_review_tactical.ppm");
+        camera.focusX=float(sim.soldier(0).x);camera.focusZ=float(sim.soldier(0).z);camera.distance=14;camera.pitch=.32f;submit();
+        capture(display,window,width,height,"test_build_review_soldier.ppm");
+        camera.focusX=3055.5f;camera.focusZ=1258.f;camera.distance=24;camera.pitch=.42f;submit();
+        capture(display,window,width,height,"test_build_review_vehicle.ppm");
+        camera.focusX=3370;camera.focusZ=1330;camera.distance=95;camera.pitch=.42f;atmosphere.time=gz::TimeOfDay::Sunset;submit();
+        capture(display,window,width,height,"test_build_review_terrain.ppm");
+        std::cout<<"Review captures: native Vulkan + Ukrainian HUD + 4096 terrain macro; software driver, 1280x720.\n";
+    }
     host.shutdown();XDestroyWindow(display,window);XCloseDisplay(display);
 }

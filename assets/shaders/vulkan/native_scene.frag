@@ -9,10 +9,12 @@ layout(set=0,binding=0,std140) uniform Frame {
     vec4 sunColor;
     vec4 sky;
     vec4 effects;
+    vec4 terrainMap;
     vec4 viewport;
 } pc;
 layout(set=0,binding=1) uniform sampler2DArray materials;
 layout(set=0,binding=2) uniform sampler2D shadowMap;
+layout(set=0,binding=4) uniform sampler2D terrainMacro;
 layout(location=0) in vec3 worldNormal;
 layout(location=1) in vec3 worldPosition;
 layout(location=2) flat in int material;
@@ -70,6 +72,14 @@ void main(){
         albedo=mix(texture(materials,vec3(worldPosition.xz*.25,1.)).rgb,texture(materials,vec3(worldPosition.xz/3.5,3.)).rgb,biome)*macro;
         float rock=(1.-smoothstep(.64,.88,abs(N.y)));
         albedo=mix(albedo,texture(materials,vec3(uv,8.)).rgb,rock*.75);
+    }
+    if(material>=1 && material<=9 && pc.terrainMap.w>.5){
+        vec2 macroUV=(worldPosition.xz-pc.terrainMap.xy)/pc.terrainMap.z;
+        vec2 edge=min(macroUV,1.-macroUV);
+        float weight=smoothstep(0.,.03,min(edge.x,edge.y));
+        vec3 macroColor=texture(terrainMacro,macroUV).rgb;
+        float detail=clamp(dot(albedo,vec3(.2126,.7152,.0722))/.14,.55,1.5);
+        albedo=mix(albedo,macroColor*mix(1.,detail,.35),weight);
     }
     if(material==17)albedo*=vec3(.50,.69,.40);
     if(material==18)albedo*=vec3(.72,.56,.43);

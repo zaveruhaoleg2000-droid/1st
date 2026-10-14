@@ -9,6 +9,7 @@ layout(set=0,binding=0,std140) uniform Frame {
     vec4 sunColor;
     vec4 sky;
     vec4 effects;
+    vec4 terrainMap;
     vec4 viewport;
 } pc;
 layout(location=0) in vec3 viewRay;

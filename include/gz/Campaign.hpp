@@ -1,6 +1,7 @@
 #pragma once
 #include "gz/Simulation.hpp"
 #include "gz/Contract.hpp"
+#include "gz/TerrainGenerator.hpp"
 #include <array>
 #include <cstdint>
 #include <string>
@@ -34,10 +35,12 @@ struct CampaignState {
     unsigned phase=0;
     std::string latestNews;
     ContractProgress contract{};
+    WorldSettings world{};
 };
 class Campaign {
 public:
     void begin(const Scenario& scenario,const Simulation& simulation);
+    void setWorldSettings(WorldSettings settings){if(settings.valid())state_.world=settings;}
     bool active()const{return !state_.scenarioId.empty();}
     const CampaignState& state()const{return state_;}
     // Advances only on fixed simulation ticks, so event order survives save/load.

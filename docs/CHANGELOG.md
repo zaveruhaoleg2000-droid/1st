@@ -1,5 +1,14 @@
 # Історія змін
 
+## v0.0.24 — native інтерфейс та генеративний рельєф, 14.10.2026
+
+- GPU HUD, українські glyphs, кнопки/картки, minimap, маркери та GPU picking.
+- Seed/region/version, узгоджені heightmap seams, фонова генерація й кеш.
+- World-aligned macro 4096/2048/1024, sRGB mip chain, foreground detail materials.
+- Campaign save v3 із підтримкою v1/v2; simulation save незмінний.
+- Windows native smoke перевіряє HUD і macro 4096, огляд містить реальні runtime screenshots.
+- Подробиці: UI_TERRAIN_v024_UA.md та REVIEW_v024_UA.md.
+
 ## v0.0.23 — матеріали та деталізована native 3D сцена, 14.10.2026
 
 - Vulkan: 16 матеріалів 512px, sRGB mip-рівні, фільтрація й анізотропія до 8x.

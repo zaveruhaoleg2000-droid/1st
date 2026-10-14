@@ -317,7 +317,7 @@ void SceneMeshBuilder::buildStatic(SceneMesh& m,TerrainWorld& world,const Camera
     }
     // River: independent, inexpensive polygons over the actual heightfield.
     for(float z=cz-3000.f;z<cz+3000.f;z+=18.f){
-        float next=z+18.f,c=riverX(z),nc=riverX(next),w=riverWidth(z),nw=riverWidth(next);
+        float next=z+18.f,c=TerrainGenerator::riverCenter(z,world.generatorSettings()),nc=TerrainGenerator::riverCenter(next,world.generatorSettings()),w=TerrainGenerator::riverWidth(z,world.generatorSettings()),nw=TerrainGenerator::riverWidth(next,world.generatorSettings());
         if(std::abs(c-camera.focusX)>radii.back()+100.f)continue;
         float aY=world.heightAt(c,z)+.8f,bY=world.heightAt(nc,next)+.8f;
         P a{c-w,aY,z},b{c+w,aY,z},cc{nc+nw,bY,next},d{nc-nw,bY,next};
@@ -336,7 +336,7 @@ void SceneMeshBuilder::buildStatic(SceneMesh& m,TerrainWorld& world,const Camera
     for(int i=-10;i<=10;++i)for(int j=-6;j<=6;++j){
         float x=3000+i*42.f,z=1220+j*46.f;
         if(std::abs(x-camera.focusX)>extent||std::abs(z-camera.focusZ)>extent||hash(i+222,j+400)<.65f)continue;
-        if(std::abs(z-1200)<24.f||std::abs(x-3000)<25.f || std::abs(x-riverX(z))<riverWidth(z)+14.f)continue;
+        if(std::abs(z-1200)<24.f||std::abs(x-3000)<25.f || std::abs(x-TerrainGenerator::riverCenter(z,world.generatorSettings()))<TerrainGenerator::riverWidth(z,world.generatorSettings())+14.f)continue;
         float y=world.heightAt(x,z),hh=6.f+hash(i+2,j+44)*10.f;
         box(m,{x,y+hh*.5f,z},19.f,hh,21.f,TextureMaterial::Brick);
         houseDetails(m,{x,y,z},19.f,21.f,hh,detailed);
@@ -350,7 +350,7 @@ void SceneMeshBuilder::buildStatic(SceneMesh& m,TerrainWorld& world,const Camera
         if(hash(i+13,j+7)<.74f)continue;
         float x=(i+.25f+hash(i,j)*.5f)*spacing,z=(j+.2f+hash(i+55,j)*.6f)*spacing;
         if(std::abs(z-1200.f-30.f*std::sin(x*.001f))<32.f||std::abs(x-3000.f)<28.f)continue;
-        if(std::abs(x-riverX(z))<riverWidth(z)+6.f)continue;
+        if(std::abs(x-TerrainGenerator::riverCenter(z,world.generatorSettings()))<TerrainGenerator::riverWidth(z,world.generatorSettings())+6.f)continue;
         const int houseI=int(std::round((x-3000.f)/42.f)),houseJ=int(std::round((z-1220.f)/46.f));
         if(houseI>=-10&&houseI<=10&&houseJ>=-6&&houseJ<=6 && hash(houseI+222,houseJ+400)>=.65f &&
            std::abs(1220.f+houseJ*46.f-1200.f)>=24.f&&std::abs(houseI*42.f)>=25.f &&

@@ -46,6 +46,9 @@ public:
     AtmosphereSettings atmosphere() const { return atmosphere_; }
 
     void prepareCamera(const Camera& camera){setupCamera(camera);}
+    void setWorldSettings(WorldSettings settings){terrain_.setGenerator(settings);}
+    void pollTerrain(){terrain_.pollGenerated();}
+    float worldHeightAt(float x,float z){return terrain_.heightAt(x,z);}
     void draw(const Simulation& sim,const Camera& camera,int selectedSquad=-1);
     void setCampaignBanner(const std::string& news,int funds){europe_.setCampaignBanner(news,funds);}
     void setPoliticalMap(bool on){politicalMap_=on;}

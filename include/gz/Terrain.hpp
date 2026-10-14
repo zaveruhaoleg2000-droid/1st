@@ -4,6 +4,8 @@
 #include <list>
 #include <string>
 #include <vector>
+#include <future>
+#include "gz/TerrainGenerator.hpp"
 
 namespace gz {
 // A 3km x 3km world sector is a 1024x1024 grid of cells (1025x1025
@@ -23,6 +25,7 @@ struct TerrainSectorId {
 class HeightMap final {
 public:
     bool generate(TerrainSectorId sector);
+    bool generate(TerrainSectorId sector,const WorldSettings& settings);
     bool saveBinary(const std::string& path) const;
     bool loadBinary(const std::string& path);
     bool loadPGM16(const std::string& path, TerrainSectorId sector);
@@ -54,6 +57,12 @@ public:
     void setTileDirectory(std::string directory);
     std::uint64_t diskLoads() const { return diskLoads_; }
     std::uint64_t contentRevision()const{return contentRevision_;}
+    void setGenerator(WorldSettings settings);
+    WorldSettings generatorSettings()const{return settings_;}
+    void setGeneratedCacheDirectory(std::string path){generatedCacheDirectory_=std::move(path);}
+    bool prefetchSector(TerrainSectorId id);
+    void pollGenerated();
+    std::size_t pendingSectorCount()const{return pending_.size();}
 private:
     HeightMap& acquire(TerrainSectorId id);
     struct CacheEntry { TerrainSectorId id; HeightMap map; };
@@ -62,6 +71,9 @@ private:
     std::uint64_t generationCount_ = 0;
     std::uint64_t diskLoads_ = 0;
     std::uint64_t contentRevision_ = 0;
-    std::string directory_;
+    std::string directory_,generatedCacheDirectory_;
+    WorldSettings settings_{};
+    struct Pending {TerrainSectorId id;WorldSettings settings;std::future<HeightMap> future;};
+    std::vector<Pending> pending_;
 };
 }

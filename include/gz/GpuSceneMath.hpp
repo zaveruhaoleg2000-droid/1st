@@ -28,9 +28,10 @@ struct GpuFrameConstants {
     float sunColor[4]{}; // xyz linear light color; w shadow strength
     float sky[4]{};      // xyz sky color; w wetness
     float effects[4]{};  // snow cover, cloud cover, exposure, water reflections
+    float terrainMap[4]{}; // origin X/Z, world extent, ready flag
     float viewport[4]{}; // width, height, shadow texel size, UNORM gamma encode
 };
-static_assert(sizeof(GpuFrameConstants)==256);
+static_assert(sizeof(GpuFrameConstants)==272);
 inline GpuFrameConstants makeGpuFrameConstants(const GpuSceneCamera& c,
     std::uint32_t width,std::uint32_t height,float seconds){
     const float d=std::clamp(c.distance,10.f,4000.f),p=std::clamp(c.pitch,.22f,1.4f);

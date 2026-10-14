@@ -73,6 +73,9 @@ bool ScenarioCatalog::loadDirectory(const std::string& directory){
 const Scenario* ScenarioCatalog::find(const std::string& id)const{for(auto& s:scenarios_)if(s.id==id)return &s;return nullptr;}
 void Campaign::begin(const Scenario& scenario,const Simulation& sim){
  state_={};state_.scenarioId=scenario.id;state_.funds=scenario.initialFunds;state_.reputation.fill(0);state_.startTick=sim.ticks();state_.latestNews=scenario.briefing;state_.contract={};
+ state_.world.version=1;state_.world.seed=1989;
+ for(unsigned char ch:scenario.id)state_.world.seed=(state_.world.seed^ch)*1099511628211ULL;
+ state_.world.region=scenario.id=="prypiat_line"?TerrainRegion::Wetland:scenario.id=="danube_archive"?TerrainRegion::Forest:TerrainRegion::Farmland;
 }
 bool Campaign::chooseDetachment(std::uint32_t soldiers){return ContractDirector::chooseStrength(state_.contract,soldiers);}
 bool Campaign::launchContract(Simulation& sim){
@@ -131,9 +134,11 @@ bool Campaign::saveSlot(const std::string& path,const Simulation& sim)const{
  put64(meta,c.startedTick);put64(meta,c.lastEvaluatedTick);
  put32(meta,c.victories);put32(meta,c.defeats);put32(meta,std::uint32_t(c.sectorInfluence));
  put32(meta,c.friendlyLosses);put32(meta,c.lastReward);
+ if(!state_.world.valid())return false;
+ put64(meta,state_.world.seed);put32(meta,state_.world.version);put32(meta,std::uint32_t(state_.world.region));
  std::vector<std::uint8_t> content=meta;content.insert(content.end(),simbytes.begin(),simbytes.end());
  std::ofstream out(temp,std::ios::binary|std::ios::trunc);if(!out)return false;
- out.write("GZCP2",5);std::vector<std::uint8_t> head;put32(head,2);put32(head,std::uint32_t(meta.size()));put32(head,std::uint32_t(simbytes.size()));put32(head,crc32(content.data(),content.size()));
+ out.write("GZCP2",5);std::vector<std::uint8_t> head;put32(head,3);put32(head,std::uint32_t(meta.size()));put32(head,std::uint32_t(simbytes.size()));put32(head,crc32(content.data(),content.size()));
  out.write(reinterpret_cast<const char*>(head.data()),std::streamsize(head.size()));out.write(reinterpret_cast<const char*>(content.data()),std::streamsize(content.size()));out.flush();bool good=bool(out);out.close();
  if(!good||!replaceFile(temp,target)){fs::remove(temp,ec);return false;}return true;
 }
@@ -141,7 +146,7 @@ bool Campaign::loadSlot(const std::string& path,Simulation& sim,const ScenarioCa
  namespace fs=std::filesystem;std::ifstream in(path,std::ios::binary);if(!in)return false;
  char magic[5]{};in.read(magic,5);if(!in||std::memcmp(magic,"GZCP2",5))return false;
  std::vector<std::uint8_t> head(16);in.read(reinterpret_cast<char*>(head.data()),16);Reader hr{head};
- std::uint32_t ver=0,mlen=0,slen=0,check=0;if(!in||!hr.u32(ver)||!hr.u32(mlen)||!hr.u32(slen)||!hr.u32(check)||(ver!=1&&ver!=2)||mlen>1024||slen<40||slen>8*1024*1024)return false;
+ std::uint32_t ver=0,mlen=0,slen=0,check=0;if(!in||!hr.u32(ver)||!hr.u32(mlen)||!hr.u32(slen)||!hr.u32(check)||(ver!=1&&ver!=2&&ver!=3)||mlen>1024||slen<40||slen>8*1024*1024)return false;
  std::vector<std::uint8_t> data(std::size_t(mlen)+slen);in.read(reinterpret_cast<char*>(data.data()),std::streamsize(data.size()));
  if(!in||in.peek()!=std::char_traits<char>::eof()||crc32(data.data(),data.size())!=check)return false;
  std::vector<std::uint8_t> meta(data.begin(),data.begin()+mlen);Reader r{meta};CampaignState next;
@@ -150,7 +155,7 @@ bool Campaign::loadSlot(const std::string& path,Simulation& sim,const ScenarioCa
  next.funds=int(val);
  for(auto& n:next.reputation){if(!r.u32(val))return false;n=int(std::int32_t(val));if(n< -100||n>100)return false;}
  if(!r.u32(next.completedEvents)||!r.u64(next.startTick)||!r.u32(next.phase)||next.phase>2)return false;
- if(ver==2){
+ if(ver>=2){
    auto& c=next.contract;
    if(!r.u32(val)||val>3)return false;c.stage=ContractStage(val);
    if(!r.u32(c.strength)||!r.u32(c.initialPlayer)||!r.u32(c.holdTicks)||
@@ -159,6 +164,7 @@ bool Campaign::loadSlot(const std::string& path,Simulation& sim,const ScenarioCa
    c.sectorInfluence=std::int32_t(val);
    if(!r.u32(c.friendlyLosses)||!r.u32(c.lastReward))return false;
  }
+ if(ver>=3){if(!r.u64(next.world.seed)||!r.u32(next.world.version)||!r.u32(val))return false;next.world.region=TerrainRegion(val);if(!next.world.valid())return false;}
  if(r.pos!=meta.size())return false;
  const auto* sc=catalog.find(next.scenarioId);if(sc->events.size()<32 && (next.completedEvents>>sc->events.size()))return false;
  const fs::path simfile=path+".loadpart";std::ofstream out(simfile,std::ios::binary|std::ios::trunc);if(!out)return false;
