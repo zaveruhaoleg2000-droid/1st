@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
+#include <cstdlib>
 #include <fstream>
 #include <limits>
 #include <vector>
@@ -104,7 +105,7 @@ bool VulkanScenePass::makeDepth(std::string& error){
     if(depthFormat_==VK_FORMAT_UNDEFINED){error="No Vulkan depth/stencil format";return false;}
     VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     image.imageType=VK_IMAGE_TYPE_2D;image.format=depthFormat_;image.extent={extent_.width,extent_.height,1};
-    image.mipLevels=1;image.arrayLayers=1;image.samples=VK_SAMPLE_COUNT_1_BIT;
+    image.mipLevels=1;image.arrayLayers=1;image.samples=samples_;
     image.tiling=VK_IMAGE_TILING_OPTIMAL;image.usage=VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
     image.sharingMode=VK_SHARING_MODE_EXCLUSIVE;image.initialLayout=VK_IMAGE_LAYOUT_UNDEFINED;
     if(vkCreateImage(device_,&image,nullptr,&depth_)!=VK_SUCCESS){error="Could not create depth image";return false;}
@@ -112,6 +113,7 @@ bool VulkanScenePass::makeDepth(std::string& error){
     std::uint32_t type=0;
     if(!allocMemory(need.memoryTypeBits,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,type) &&
        !allocMemory(need.memoryTypeBits,0,type)){error="No Vulkan depth image memory";return false;}
+    depthAllocationBytes_=need.size;
     VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};ai.allocationSize=need.size;ai.memoryTypeIndex=type;
     if(vkAllocateMemory(device_,&ai,nullptr,&depthMemory_)!=VK_SUCCESS ||
        vkBindImageMemory(device_,depth_,depthMemory_,0)!=VK_SUCCESS){error="Depth memory allocation failed";return false;}
@@ -123,110 +125,112 @@ bool VulkanScenePass::makeDepth(std::string& error){
     return true;
 }
 bool VulkanScenePass::makeRenderPass(std::string& error){
-    std::array<VkAttachmentDescription,2> attachments{};
-    attachments[0].format=colorFormat_;attachments[0].samples=VK_SAMPLE_COUNT_1_BIT;
-    attachments[0].loadOp=VK_ATTACHMENT_LOAD_OP_CLEAR;attachments[0].storeOp=VK_ATTACHMENT_STORE_OP_STORE;
-    attachments[0].stencilLoadOp=VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    attachments[0].stencilStoreOp=VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    attachments[0].initialLayout=VK_IMAGE_LAYOUT_UNDEFINED;attachments[0].finalLayout=VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    attachments[1].format=depthFormat_;attachments[1].samples=VK_SAMPLE_COUNT_1_BIT;
+    const bool aa=samples_!=VK_SAMPLE_COUNT_1_BIT;
+    std::array<VkAttachmentDescription,3> attachments{};
+    attachments[0].format=colorFormat_;attachments[0].samples=samples_;
+    attachments[0].loadOp=VK_ATTACHMENT_LOAD_OP_CLEAR;
+    attachments[0].storeOp=aa?VK_ATTACHMENT_STORE_OP_DONT_CARE:VK_ATTACHMENT_STORE_OP_STORE;
+    attachments[0].stencilLoadOp=VK_ATTACHMENT_LOAD_OP_DONT_CARE;attachments[0].stencilStoreOp=VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachments[0].initialLayout=VK_IMAGE_LAYOUT_UNDEFINED;
+    attachments[0].finalLayout=aa?VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    attachments[1].format=depthFormat_;attachments[1].samples=samples_;
     attachments[1].loadOp=VK_ATTACHMENT_LOAD_OP_CLEAR;attachments[1].storeOp=VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    attachments[1].stencilLoadOp=VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    attachments[1].stencilStoreOp=VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachments[1].stencilLoadOp=VK_ATTACHMENT_LOAD_OP_DONT_CARE;attachments[1].stencilStoreOp=VK_ATTACHMENT_STORE_OP_DONT_CARE;
     attachments[1].initialLayout=VK_IMAGE_LAYOUT_UNDEFINED;attachments[1].finalLayout=VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    VkAttachmentReference color{0,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-    VkAttachmentReference depth{1,VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+    attachments[2]=attachments[0];attachments[2].samples=VK_SAMPLE_COUNT_1_BIT;
+    attachments[2].loadOp=VK_ATTACHMENT_LOAD_OP_DONT_CARE;attachments[2].storeOp=VK_ATTACHMENT_STORE_OP_STORE;
+    attachments[2].finalLayout=VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    VkAttachmentReference color{0,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},depth{1,VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+    VkAttachmentReference resolve{2,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
     VkSubpassDescription sub{};sub.pipelineBindPoint=VK_PIPELINE_BIND_POINT_GRAPHICS;
     sub.colorAttachmentCount=1;sub.pColorAttachments=&color;sub.pDepthStencilAttachment=&depth;
+    if(aa)sub.pResolveAttachments=&resolve;
     std::array<VkSubpassDependency,2> deps{};
     deps[0].srcSubpass=VK_SUBPASS_EXTERNAL;deps[0].dstSubpass=0;
-    deps[0].srcStageMask=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT|VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    deps[0].srcStageMask=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT|VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT|VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
     deps[0].srcAccessMask=VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT|VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    deps[0].dstStageMask=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT|VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT|VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    deps[0].dstStageMask=deps[0].srcStageMask;
     deps[0].dstAccessMask=VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT|VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT|VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     deps[1].srcSubpass=0;deps[1].dstSubpass=VK_SUBPASS_EXTERNAL;
-    deps[1].srcStageMask=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    deps[1].dstStageMask=VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+    deps[1].srcStageMask=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;deps[1].dstStageMask=VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
     deps[1].srcAccessMask=VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     VkRenderPassCreateInfo create{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
-    create.attachmentCount=std::uint32_t(attachments.size());create.pAttachments=attachments.data();
-    create.subpassCount=1;create.pSubpasses=&sub;create.dependencyCount=std::uint32_t(deps.size());create.pDependencies=deps.data();
-    if(vkCreateRenderPass(device_,&create,nullptr,&pass_)!=VK_SUCCESS){error="vkCreateRenderPass failed";return false;}
+    create.attachmentCount=aa?3:2;create.pAttachments=attachments.data();create.subpassCount=1;create.pSubpasses=&sub;
+    create.dependencyCount=2;create.pDependencies=deps.data();
+    if(vkCreateRenderPass(device_,&create,nullptr,&pass_)!=VK_SUCCESS){error="Native render pass creation failed";return false;}
     return true;
 }
 bool VulkanScenePass::makePipeline(std::string& error){
-    auto vertexSpirv=readSpirv("assets/shaders/vulkan/native_scene.vert.spv");
-    auto fragmentSpirv=readSpirv("assets/shaders/vulkan/native_scene.frag.spv");
-#ifdef GZ_SHADER_DIR
-    if(vertexSpirv.empty())vertexSpirv=readSpirv((std::string(GZ_SHADER_DIR)+"/native_scene.vert.spv").c_str());
-    if(fragmentSpirv.empty())fragmentSpirv=readSpirv((std::string(GZ_SHADER_DIR)+"/native_scene.frag.spv").c_str());
-#endif
-    if(vertexSpirv.empty() || fragmentSpirv.empty()){
-        error="GPU SPIR-V files missing: build the shader target with glslangValidator";return false;
-    }
-    VkShaderModule vs=makeShader(device_,vertexSpirv),fs=makeShader(device_,fragmentSpirv);
-    if(!vs || !fs){if(vs)vkDestroyShaderModule(device_,vs,nullptr);if(fs)vkDestroyShaderModule(device_,fs,nullptr);
-        error="Could not create GPU shader modules";return false;}
-    const std::array<VkPipelineShaderStageCreateInfo,2> stages=[&]{
-        std::array<VkPipelineShaderStageCreateInfo,2> s{};
-        s[0].sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        s[0].stage=VK_SHADER_STAGE_VERTEX_BIT;s[0].module=vs;s[0].pName="main";
-        s[1].sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        s[1].stage=VK_SHADER_STAGE_FRAGMENT_BIT;s[1].module=fs;s[1].pName="main";
-        return s;
-    }();
-    VkVertexInputBindingDescription binding{0,sizeof(SceneVertex),VK_VERTEX_INPUT_RATE_VERTEX};
-    std::array<VkVertexInputAttributeDescription,5> attributes{{
-        {0,0,VK_FORMAT_R32G32B32_SFLOAT,std::uint32_t(offsetof(SceneVertex,x))},
-        {1,0,VK_FORMAT_R32G32B32_SFLOAT,std::uint32_t(offsetof(SceneVertex,nx))},
-        {2,0,VK_FORMAT_R32_SFLOAT,std::uint32_t(offsetof(SceneVertex,material))},
-        {3,0,VK_FORMAT_R32_SFLOAT,std::uint32_t(offsetof(SceneVertex,windWeight))},
-        {4,0,VK_FORMAT_R32G32_SFLOAT,std::uint32_t(offsetof(SceneVertex,anchorX))}
-    }};
-    VkPipelineVertexInputStateCreateInfo input{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-    input.vertexBindingDescriptionCount=1;input.pVertexBindingDescriptions=&binding;
-    input.vertexAttributeDescriptionCount=std::uint32_t(attributes.size());input.pVertexAttributeDescriptions=attributes.data();
-    VkPipelineInputAssemblyStateCreateInfo assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-    assembly.topology=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    VkViewport viewport{0.f,0.f,float(extent_.width),float(extent_.height),0.f,1.f};
-    VkRect2D scissor{{0,0},extent_};
-    VkPipelineViewportStateCreateInfo viewportState{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
-    viewportState.viewportCount=1;viewportState.pViewports=&viewport;
-    viewportState.scissorCount=1;viewportState.pScissors=&scissor;
-    VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
-    raster.polygonMode=VK_POLYGON_MODE_FILL;raster.cullMode=VK_CULL_MODE_NONE;
-    raster.frontFace=VK_FRONT_FACE_COUNTER_CLOCKWISE;raster.lineWidth=1.f;
-    VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-    multisample.rasterizationSamples=VK_SAMPLE_COUNT_1_BIT;
-    VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-    depth.depthTestEnable=VK_TRUE;depth.depthWriteEnable=VK_TRUE;
-    depth.depthCompareOp=VK_COMPARE_OP_LESS;
-    VkPipelineColorBlendAttachmentState blend{};blend.colorWriteMask=VK_COLOR_COMPONENT_R_BIT|
-        VK_COLOR_COMPONENT_G_BIT|VK_COLOR_COMPONENT_B_BIT|VK_COLOR_COMPONENT_A_BIT;
-    VkPipelineColorBlendStateCreateInfo blendState{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-    blendState.attachmentCount=1;blendState.pAttachments=&blend;
-    VkPushConstantRange range{VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT,0,sizeof(GpuFrameConstants)};
     VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    layoutInfo.pushConstantRangeCount=1;layoutInfo.pPushConstantRanges=&range;
-    if(vkCreatePipelineLayout(device_,&layoutInfo,nullptr,&layout_)!=VK_SUCCESS){
+    layoutInfo.setLayoutCount=1;layoutInfo.pSetLayouts=&descriptorLayout_;
+    if(vkCreatePipelineLayout(device_,&layoutInfo,nullptr,&layout_)!=VK_SUCCESS){error="Native pipeline layout creation failed";return false;}
+    auto load=[](const char* name){
+        auto spirv=readSpirv((std::string("assets/shaders/vulkan/")+name+".spv").c_str());
+#ifdef GZ_SHADER_DIR
+        if(spirv.empty())spirv=readSpirv((std::string(GZ_SHADER_DIR)+"/"+name+".spv").c_str());
+#endif
+        return spirv;
+    };
+    auto make=[&](const char* prefix,VkRenderPass pass,VkPipeline& out,bool shadow,bool sky){
+        const auto vs=makeShader(device_,load((std::string(prefix)+".vert").c_str()));
+        const auto fs=makeShader(device_,load((std::string(prefix)+".frag").c_str()));
+        if(!vs||!fs){if(vs)vkDestroyShaderModule(device_,vs,nullptr);if(fs)vkDestroyShaderModule(device_,fs,nullptr);
+            error=std::string("Missing/invalid native shader: ")+prefix;return false;}
+        std::array<VkPipelineShaderStageCreateInfo,2> stages{};
+        stages[0].sType=stages[1].sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[0].stage=VK_SHADER_STAGE_VERTEX_BIT;stages[0].module=vs;stages[0].pName="main";
+        stages[1].stage=VK_SHADER_STAGE_FRAGMENT_BIT;stages[1].module=fs;stages[1].pName="main";
+        VkVertexInputBindingDescription binding{0,sizeof(SceneVertex),VK_VERTEX_INPUT_RATE_VERTEX};
+        const std::array<VkVertexInputAttributeDescription,6> attributes{{
+            {0,0,VK_FORMAT_R32G32B32_SFLOAT,std::uint32_t(offsetof(SceneVertex,x))},
+            {1,0,VK_FORMAT_R32G32B32_SFLOAT,std::uint32_t(offsetof(SceneVertex,nx))},
+            {2,0,VK_FORMAT_R32_SFLOAT,std::uint32_t(offsetof(SceneVertex,material))},
+            {3,0,VK_FORMAT_R32_SFLOAT,std::uint32_t(offsetof(SceneVertex,windWeight))},
+            {4,0,VK_FORMAT_R32G32_SFLOAT,std::uint32_t(offsetof(SceneVertex,anchorX))},
+            {5,0,VK_FORMAT_R32G32_SFLOAT,std::uint32_t(offsetof(SceneVertex,u))}
+        }};
+        VkPipelineVertexInputStateCreateInfo input{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+        if(!sky){input.vertexBindingDescriptionCount=1;input.pVertexBindingDescriptions=&binding;
+            input.vertexAttributeDescriptionCount=std::uint32_t(attributes.size());input.pVertexAttributeDescriptions=attributes.data();}
+        VkPipelineInputAssemblyStateCreateInfo assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+        assembly.topology=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        const VkExtent2D size=shadow?VkExtent2D{shadowSize_,shadowSize_}:extent_;
+        VkViewport viewport{0,0,float(size.width),float(size.height),0,1};VkRect2D scissor{{0,0},size};
+        VkPipelineViewportStateCreateInfo viewportState{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+        viewportState.viewportCount=viewportState.scissorCount=1;viewportState.pViewports=&viewport;viewportState.pScissors=&scissor;
+        VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+        raster.polygonMode=VK_POLYGON_MODE_FILL;raster.cullMode=VK_CULL_MODE_NONE;raster.frontFace=VK_FRONT_FACE_COUNTER_CLOCKWISE;raster.lineWidth=1;
+        raster.depthBiasEnable=shadow;raster.depthBiasConstantFactor=shadow?1.5f:0.f;raster.depthBiasSlopeFactor=shadow?1.7f:0.f;
+        VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+        multisample.rasterizationSamples=shadow?VK_SAMPLE_COUNT_1_BIT:samples_;
+        VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+        depth.depthTestEnable=depth.depthWriteEnable=sky?VK_FALSE:VK_TRUE;depth.depthCompareOp=VK_COMPARE_OP_LESS_OR_EQUAL;
+        VkPipelineColorBlendAttachmentState blend{};blend.colorWriteMask=15;
+        VkPipelineColorBlendStateCreateInfo blendState{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+        blendState.attachmentCount=shadow?0:1;blendState.pAttachments=shadow?nullptr:&blend;
+        VkGraphicsPipelineCreateInfo graphics{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+        graphics.stageCount=2;graphics.pStages=stages.data();graphics.pVertexInputState=&input;graphics.pInputAssemblyState=&assembly;
+        graphics.pViewportState=&viewportState;graphics.pRasterizationState=&raster;graphics.pMultisampleState=&multisample;
+        graphics.pDepthStencilState=&depth;graphics.pColorBlendState=&blendState;graphics.layout=layout_;graphics.renderPass=pass;
+        const auto result=vkCreateGraphicsPipelines(device_,VK_NULL_HANDLE,1,&graphics,nullptr,&out);
         vkDestroyShaderModule(device_,vs,nullptr);vkDestroyShaderModule(device_,fs,nullptr);
-        error="GPU pipeline layout failed";return false;
-    }
-    VkGraphicsPipelineCreateInfo graphics{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-    graphics.stageCount=std::uint32_t(stages.size());graphics.pStages=stages.data();
-    graphics.pVertexInputState=&input;graphics.pInputAssemblyState=&assembly;
-    graphics.pViewportState=&viewportState;graphics.pRasterizationState=&raster;
-    graphics.pMultisampleState=&multisample;graphics.pDepthStencilState=&depth;
-    graphics.pColorBlendState=&blendState;graphics.layout=layout_;graphics.renderPass=pass_;
-    const auto result=vkCreateGraphicsPipelines(device_,VK_NULL_HANDLE,1,&graphics,nullptr,&pipeline_);
-    vkDestroyShaderModule(device_,vs,nullptr);vkDestroyShaderModule(device_,fs,nullptr);
-    if(result!=VK_SUCCESS){error="Native Vulkan graphics pipeline creation failed";return false;}
-    return true;
+        if(result!=VK_SUCCESS){error=std::string("Native graphics pipeline failed: ")+prefix;return false;}return true;
+    };
+    return make("native_scene",pass_,pipeline_,false,false) && make("native_sky",pass_,skyPipeline_,false,true) &&
+        make("native_shadow",shadowPass_,shadowPipeline_,true,false);
 }
 void VulkanScenePass::destroySwapchain()noexcept{
     if(device_){
         for(auto f:framebuffers_)vkDestroyFramebuffer(device_,f,nullptr);
         if(pipeline_)vkDestroyPipeline(device_,pipeline_,nullptr);
+        if(skyPipeline_)vkDestroyPipeline(device_,skyPipeline_,nullptr);
+        if(shadowPipeline_)vkDestroyPipeline(device_,shadowPipeline_,nullptr);
+        if(shadowFramebuffer_)vkDestroyFramebuffer(device_,shadowFramebuffer_,nullptr);
+        if(shadowPass_)vkDestroyRenderPass(device_,shadowPass_,nullptr);
+        if(descriptorPool_)vkDestroyDescriptorPool(device_,descriptorPool_,nullptr);
+        if(descriptorLayout_)vkDestroyDescriptorSetLayout(device_,descriptorLayout_,nullptr);
+        if(materialSampler_)vkDestroySampler(device_,materialSampler_,nullptr);
+        if(shadowSampler_)vkDestroySampler(device_,shadowSampler_,nullptr);
         if(layout_)vkDestroyPipelineLayout(device_,layout_,nullptr);
         if(pass_)vkDestroyRenderPass(device_,pass_,nullptr);
         if(depthView_)vkDestroyImageView(device_,depthView_,nullptr);
@@ -234,6 +238,11 @@ void VulkanScenePass::destroySwapchain()noexcept{
         if(depthMemory_)vkFreeMemory(device_,depthMemory_,nullptr);
         for(auto view:colorViews_)vkDestroyImageView(device_,view,nullptr);
     }
+    destroyImage(materials_);destroyImage(shadow_);destroyImage(msaaColor_);
+    destroyBuffer(uniforms_);destroyBuffer(textureStaging_);textureCopies_.clear();texturesPending_=false;
+    skyPipeline_=shadowPipeline_=VK_NULL_HANDLE;shadowPass_=VK_NULL_HANDLE;shadowFramebuffer_=VK_NULL_HANDLE;
+    descriptorLayout_=VK_NULL_HANDLE;descriptorPool_=VK_NULL_HANDLE;descriptor_=VK_NULL_HANDLE;
+    materialSampler_=shadowSampler_=VK_NULL_HANDLE;depthAllocationBytes_=0;materialCount_=0;
     framebuffers_.clear();colorViews_.clear();pass_=VK_NULL_HANDLE;pipeline_=VK_NULL_HANDLE;
     layout_=VK_NULL_HANDLE;depth_=VK_NULL_HANDLE;depthMemory_=VK_NULL_HANDLE;
     depthView_=VK_NULL_HANDLE;depthFormat_=VK_FORMAT_UNDEFINED;ready_=false;
@@ -249,7 +258,18 @@ bool VulkanScenePass::initialize(VkPhysicalDevice physical,VkDevice device,VkFor
     if(device_ && device_!=device)destroy();
     destroySwapchain();physical_=physical;device_=device;colorFormat_=format;extent_=extent;budget_=budget;
     if(images.empty()||!extent.width||!extent.height){error="GPU render targets missing";return false;}
-    if(!makeDepth(error)||!makeRenderPass(error)||!makePipeline(error)){destroySwapchain();return false;}
+    VkPhysicalDeviceProperties properties{};vkGetPhysicalDeviceProperties(physical_,&properties);
+    const auto supported=properties.limits.framebufferColorSampleCounts&properties.limits.framebufferDepthSampleCounts;
+    const char* quality=std::getenv("GZ_GPU_QUALITY");
+    const bool low=quality&&std::strcmp(quality,"low")==0;
+    const bool medium=quality&&std::strcmp(quality,"medium")==0;
+    samples_=!low&&(supported&VK_SAMPLE_COUNT_4_BIT)?VK_SAMPLE_COUNT_4_BIT:VK_SAMPLE_COUNT_1_BIT;
+    shadowSize_=low?512u:(medium?1024u:2048u);
+    if(!makeDepth(error)||!makeRenderPass(error)||!makeMaterials(error)||!makeShadow(error)||!makeDescriptors(error) ||
+       (samples_!=VK_SAMPLE_COUNT_1_BIT&&!makeImage(msaaColor_,colorFormat_,extent.width,extent.height,1,1,samples_,
+          VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,VK_IMAGE_ASPECT_COLOR_BIT,error))||!makePipeline(error)){
+        destroySwapchain();return false;
+    }
     for(VkImage img:images){
         VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         vi.image=img;vi.viewType=VK_IMAGE_VIEW_TYPE_2D;vi.format=colorFormat_;
@@ -258,9 +278,10 @@ bool VulkanScenePass::initialize(VkPhysicalDevice physical,VkDevice device,VkFor
         VkImageView view=VK_NULL_HANDLE;
         if(vkCreateImageView(device_,&vi,nullptr,&view)!=VK_SUCCESS){error="Swapchain image view failed";destroySwapchain();return false;}
         colorViews_.push_back(view);
-        const std::array<VkImageView,2> attachments{view,depthView_};
+        const bool aa=samples_!=VK_SAMPLE_COUNT_1_BIT;
+        const std::array<VkImageView,3> attachments{aa?msaaColor_.view:view,depthView_,view};
         VkFramebufferCreateInfo f{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-        f.renderPass=pass_;f.attachmentCount=2;f.pAttachments=attachments.data();
+        f.renderPass=pass_;f.attachmentCount=aa?3:2;f.pAttachments=attachments.data();
         f.width=extent_.width;f.height=extent_.height;f.layers=1;
         VkFramebuffer framebuffer=VK_NULL_HANDLE;
         if(vkCreateFramebuffer(device_,&f,nullptr,&framebuffer)!=VK_SUCCESS){error="GPU framebuffer failed";destroySwapchain();return false;}
@@ -268,11 +289,13 @@ bool VulkanScenePass::initialize(VkPhysicalDevice physical,VkDevice device,VkFor
     }
     ready_=true;return true;
 }
-bool VulkanScenePass::upload(const GeometryView& mesh,std::uint64_t& bytes,std::string& error){
+bool VulkanScenePass::upload(const GeometryView& mesh,const GpuFrameConstants& constants,std::uint64_t& bytes,std::string& error){
     bytes=0;pending_={};
     if(!ready_||!mesh.valid()||mesh.strideBytes!=sizeof(SceneVertex)){
         error="Native GPU mesh format invalid";return false;
     }
+    // The preceding submit fence has completed before upload() is called.
+    if(!texturesPending_ && textureStaging_.buffer)destroyBuffer(textureStaging_);
     const std::size_t ib=mesh.indexCount*sizeof(std::uint32_t);
     if(mesh.vertexBytes>budget_/2 || ib>budget_/2-mesh.vertexBytes){
         error="Native mesh staging and device buffers exceed streaming budget";return false;
@@ -306,6 +329,13 @@ bool VulkanScenePass::upload(const GeometryView& mesh,std::uint64_t& bytes,std::
         if(vkFlushMappedMemoryRanges(device_,1,&flush)!=VK_SUCCESS){error="Index flush failed";return false;}
     }
     indices_=std::uint32_t(mesh.indexCount);
+    auto frame=constants;frame.viewport[2]=1.f/float(shadowSize_);
+    frame.viewport[3]=(colorFormat_==VK_FORMAT_B8G8R8A8_SRGB || colorFormat_==VK_FORMAT_R8G8B8A8_SRGB)?0.f:1.f;
+    std::memcpy(uniforms_.mapped,&frame,sizeof(frame));
+    if(!uniforms_.coherent){
+        VkMappedMemoryRange flush{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};flush.memory=uniforms_.memory;flush.size=VK_WHOLE_SIZE;
+        if(vkFlushMappedMemoryRanges(device_,1,&flush)!=VK_SUCCESS){error="Frame uniform flush failed";return false;}
+    }
     bytes=pending_.bytes();pendingMesh_=mesh;
     return true;
 }
@@ -333,6 +363,18 @@ void VulkanScenePass::record(VkCommandBuffer cmd,std::uint32_t image,const GpuFr
     if(count)vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,0,
         0,nullptr,count,barriers.data(),0,nullptr);
     uploads_.commit(pendingMesh_);pending_={};
+    recordTextures(cmd);
+    vkCmdBindDescriptorSets(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,layout_,0,1,&descriptor_,0,nullptr);
+    const VkDeviceSize offset=0;
+    vkCmdBindVertexBuffers(cmd,0,1,&vertexDevice_.buffer,&offset);
+    vkCmdBindIndexBuffer(cmd,indexDevice_.buffer,0,VK_INDEX_TYPE_UINT32);
+    VkClearValue shadowClear{};shadowClear.depthStencil={1.f,0};
+    VkRenderPassBeginInfo shadowPass{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    shadowPass.renderPass=shadowPass_;shadowPass.framebuffer=shadowFramebuffer_;shadowPass.renderArea={{0,0},{shadowSize_,shadowSize_}};
+    shadowPass.clearValueCount=1;shadowPass.pClearValues=&shadowClear;
+    vkCmdBeginRenderPass(cmd,&shadowPass,VK_SUBPASS_CONTENTS_INLINE);
+    if(constants.sunColor[3]>.001f){vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,shadowPipeline_);vkCmdDrawIndexed(cmd,indices_,1,0,0,0);}
+    vkCmdEndRenderPass(cmd);
     std::array<VkClearValue,2> clear{};
     clear[0].color={{.35f,.45f,.50f,1.f}};
     clear[1].depthStencil={1.f,0};
@@ -340,12 +382,8 @@ void VulkanScenePass::record(VkCommandBuffer cmd,std::uint32_t image,const GpuFr
     rp.renderPass=pass_;rp.framebuffer=framebuffers_[image];rp.renderArea={{0,0},extent_};
     rp.clearValueCount=std::uint32_t(clear.size());rp.pClearValues=clear.data();
     vkCmdBeginRenderPass(cmd,&rp,VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,skyPipeline_);vkCmdDraw(cmd,3,1,0,0);
     vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,pipeline_);
-    const VkDeviceSize offset=0;
-    vkCmdBindVertexBuffers(cmd,0,1,&vertexDevice_.buffer,&offset);
-    vkCmdBindIndexBuffer(cmd,indexDevice_.buffer,0,VK_INDEX_TYPE_UINT32);
-    vkCmdPushConstants(cmd,layout_,VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT,0,
-                       sizeof(GpuFrameConstants),&constants);
     vkCmdDrawIndexed(cmd,indices_,1,0,0,0);
     vkCmdEndRenderPass(cmd);
 }

@@ -38,5 +38,15 @@ int main(){
     GZ_CHECK(nativeView.valid() && nativeView.indexCount==mesh.indices.size());
     auto camera=gz::makeGpuSceneCamera(gz::Camera{},3.f,{});
     GZ_CHECK(camera.enabled && std::isfinite(camera.focusY));
-    std::cout<<"GPU camera projection, push constants and native mesh layout: PASS\n";
+    auto sunset=gz::makeGpuSceneCamera(gz::Camera{},3.f,{gz::Weather::Rain,gz::TimeOfDay::Sunset,false});
+    GZ_CHECK(sunset.sunR>sunset.sunB && sunset.wetness>.5f && sunset.shadowStrength==0.f);
+    auto rainConstants=gz::makeGpuFrameConstants(sunset,960,540,3.f);
+    GZ_CHECK(rainConstants.sky[3]==sunset.wetness && rainConstants.sunColor[3]==0.f);
+    GZ_CHECK(std::abs(mulRow(rainConstants.shadowProjection,0,sunset.focusX,sunset.focusY,sunset.focusZ))<.001f);
+    GZ_CHECK(std::abs(mulRow(rainConstants.shadowProjection,1,sunset.focusX,sunset.focusY,sunset.focusZ))<.001f);
+    GZ_CHECK(std::abs(mulRow(rainConstants.shadowProjection,2,sunset.focusX,sunset.focusY,sunset.focusZ)-.5f)<.001f);
+    gz::VisualEffects disabled;disabled.wind=false;disabled.waterReflections=false;
+    auto calm=gz::makeGpuSceneCamera(gz::Camera{},3.f,{},disabled);
+    GZ_CHECK(calm.wind==0.f && !calm.waterReflections);
+    std::cout<<"GPU camera, shadow projection, weather uniforms and native mesh layout: PASS\n";
 }

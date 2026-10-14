@@ -270,7 +270,7 @@ int main(int argc,char**argv){
       submission.simulationTick=game.sim.stats().tick;submission.visualTimeSeconds=t;
       if(nativeTactical){
           submission.worldMesh=gz::makeGeometryView(gpuMesh);
-          submission.camera=gz::makeGpuSceneCamera(game.camera,gpuTerrain.heightAt(game.camera.focusX,game.camera.focusZ),game.atmosphere);
+          submission.camera=gz::makeGpuSceneCamera(game.camera,gpuTerrain.heightAt(game.camera.focusX,game.camera.focusZ),game.atmosphere,game.render.effects());
       }
       const bool gpuPresented=graphic.submit(submission);
       if(!gpuPresented && nativeTactical){

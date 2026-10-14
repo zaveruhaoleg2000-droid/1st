@@ -278,8 +278,8 @@ public:
         features.enabledValidationFeatureCount=1;features.pEnabledValidationFeatures=&synchronization;
         features.pNext=&debugInfo;
         VkApplicationInfo info{VK_STRUCTURE_TYPE_APPLICATION_INFO};
-        info.pApplicationName="GRAY ZONE: 1989";info.applicationVersion=VK_MAKE_VERSION(0,0,21);
-        info.pEngineName="GZ89";info.engineVersion=VK_MAKE_VERSION(0,0,21);info.apiVersion=VK_API_VERSION_1_0;
+        info.pApplicationName="GRAY ZONE: 1989";info.applicationVersion=VK_MAKE_VERSION(0,0,23);
+        info.pEngineName="GZ89";info.engineVersion=VK_MAKE_VERSION(0,0,23);info.apiVersion=VK_API_VERSION_1_0;
         VkInstanceCreateInfo ic{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
         ic.pApplicationInfo=&info;ic.enabledExtensionCount=validation?4:2;ic.ppEnabledExtensionNames=extensions;
         if(validation){ic.enabledLayerCount=1;ic.ppEnabledLayerNames=&validationLayer;ic.pNext=&features;}
@@ -323,6 +323,10 @@ public:
         qi.queueFamilyIndex=queueFamily_;qi.queueCount=1;qi.pQueuePriorities=&priority;
         const char* deviceExtensions[]={VK_KHR_SWAPCHAIN_EXTENSION_NAME};
         VkDeviceCreateInfo di{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+        VkPhysicalDeviceFeatures supportedFeatures{},enabledFeatures{};
+        vkGetPhysicalDeviceFeatures(gpu_,&supportedFeatures);
+        enabledFeatures.samplerAnisotropy=supportedFeatures.samplerAnisotropy;
+        di.pEnabledFeatures=&enabledFeatures;
         di.queueCreateInfoCount=1;di.pQueueCreateInfos=&qi;
         di.enabledExtensionCount=1;di.ppEnabledExtensionNames=deviceExtensions;
         if(vkCreateDevice(gpu_,&di,nullptr,&device_)!=VK_SUCCESS){error="vkCreateDevice failed";return false;}
@@ -351,17 +355,16 @@ public:
         const bool requestedNative=submission.camera.enabled&&submission.worldMesh.valid()&&nativeScene_.ready();
         if(!initialized_||(!frame.valid()&&!requestedNative)){error="Invalid Vulkan frame";return false;}
         if(vkWaitForFences(device_,1,&fence_,VK_TRUE,UINT64_MAX)!=VK_SUCCESS){error="GPU fence wait failed";return false;}
+        const auto constants=makeGpuFrameConstants(submission.camera,extent_.width,extent_.height,submission.visualTimeSeconds);
+        const bool native=requestedNative;
+        std::uint64_t meshBytes=0;
+        // Reject invalid data before acquiring a swapchain semaphore.
+        if(native && !nativeScene_.upload(submission.worldMesh,constants,meshBytes,error))return false;
         std::uint32_t image=0;
         VkResult result=vkAcquireNextImageKHR(device_,swapchain_,UINT64_MAX,acquired_,VK_NULL_HANDLE,&image);
         if(result==VK_ERROR_OUT_OF_DATE_KHR){error="Vulkan swapchain outdated (resize required)";return false;}
         if(result!=VK_SUCCESS && result!=VK_SUBOPTIMAL_KHR){error="vkAcquireNextImageKHR failed";return false;}
         if(image>=images_.size()){error="Vulkan swapchain image array invalid";return false;}
-        bool native=requestedNative;
-        std::uint64_t meshBytes=0;
-        if(native && !nativeScene_.upload(submission.worldMesh,meshBytes,error)){
-            // Do not present a stale CPU image: platform re-renders in software.
-            return false;
-        }
         if(!native){
             if(!mapped_||!frame.valid()){error="Vulkan fallback framebuffer missing";return false;}
             auto* target=static_cast<std::uint32_t*>(mapped_);
@@ -385,8 +388,6 @@ public:
         begin.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         if(vkBeginCommandBuffer(command_,&begin)!=VK_SUCCESS){error="vkBeginCommandBuffer failed";return false;}
         if(native){
-            const auto constants=makeGpuFrameConstants(submission.camera,extent_.width,extent_.height,
-                                                        submission.visualTimeSeconds);
             nativeScene_.record(command_,image,constants);
         }else{
             VkImageMemoryBarrier toTransfer{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -444,6 +445,10 @@ public:
             telemetry_.meshUploadedBytes+=meshBytes;
             if(!meshBytes)++telemetry_.skippedMeshUploads;
             telemetry_.meshResidentBytes=nativeScene_.residentBytes();
+            telemetry_.graphicsResidentBytes=nativeScene_.graphicsResidentBytes();
+            telemetry_.materialTextureCount=nativeScene_.materialCount();
+            telemetry_.shadowMapSize=nativeScene_.shadowMapSize();
+            telemetry_.msaaSamples=nativeScene_.sampleCount();
             telemetry_.uploadedBytes+=meshBytes;
         }else{
             telemetry_.uploadedBytes+=std::uint64_t(extent_.width)*extent_.height*4;

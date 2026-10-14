@@ -68,6 +68,8 @@ struct RenderTelemetry {
     std::uint64_t meshUploadedBytes=0;
     std::uint64_t skippedMeshUploads=0;
     std::uint64_t meshResidentBytes=0;
+    std::uint64_t graphicsResidentBytes=0;
+    std::uint32_t materialTextureCount=0,shadowMapSize=0,msaaSamples=1;
     std::uint64_t validationErrors=0;
 };
 class IRenderBackend {

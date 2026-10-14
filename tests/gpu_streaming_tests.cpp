@@ -20,11 +20,13 @@ int main(){
     GZ_CHECK(upload.bytes()==view.vertexBytes+view.indexCount*4);
     tracker.commit(view);
     builder.build(mesh,terrain,sim,camera,0);view=gz::makeGeometryView(mesh);
+    GZ_CHECK(builder.unitBuildCount()==1);
     GZ_CHECK(view.staticRevision==staticRevision && view.dynamicRevision==dynamicRevision);
     GZ_CHECK(tracker.plan(view).bytes()==0);
     camera.yaw+=.2f;camera.pitch+=.05f;
     builder.build(mesh,terrain,sim,camera,0);
     GZ_CHECK(builder.staticBuildCount()==1 && tracker.plan(gz::makeGeometryView(mesh)).bytes()==0);
+    GZ_CHECK(builder.unitBuildCount()==1);
     sim.step(10);builder.build(mesh,terrain,sim,camera,0);view=gz::makeGeometryView(mesh);
     GZ_CHECK(view.staticRevision==staticRevision && view.dynamicRevision>dynamicRevision);
     GZ_CHECK(std::memcmp(mesh.vertices.data(),original.vertices.data(),view.staticVertexBytes)==0);

@@ -1,6 +1,6 @@
-# GRAY ZONE: 1989 — перенос у Codex (v0.0.22)
+# GRAY ZONE: 1989 — вихідний код v0.0.23
 
-Це **вихідний код**, а не Windows EXE. Архів сформовано з останнього доступного проєкту **v0.0.22**, без тимчасових збірок і стороннього концепт-арту. Всередині повний `src/`, `include/`, `tests/`, `assets/` та CMake.
+Це **вихідний код**, а не Windows EXE. Початковий проєкт v0.0.22 модернізовано до v0.0.23: кешування GPU-геометрії, матеріали, освітлення й деталізовані моделі. Всередині повний `src/`, `include/`, `tests/`, `assets/` та CMake. Перевірки та межі наведено в [docs/GRAPHICS_RTX3050TI_UA.md](docs/GRAPHICS_RTX3050TI_UA.md).
 
 Результати першого етапу модернізації, актуальні Debug/Release-перевірки й
 Windows CPU smoke-test: [MODERNIZATION_PHASE1_UA.md](docs/MODERNIZATION_PHASE1_UA.md).

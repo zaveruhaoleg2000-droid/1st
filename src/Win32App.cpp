@@ -289,7 +289,7 @@ struct App {
         submission.visualTimeSeconds=renderer.visualTime();
         if(nativeTactical){
             submission.worldMesh=gz::makeGeometryView(gpuMesh);
-            submission.camera=gz::makeGpuSceneCamera(camera,gpuTerrain.heightAt(camera.focusX,camera.focusZ),atmosphere);
+            submission.camera=gz::makeGpuSceneCamera(camera,gpuTerrain.heightAt(camera.focusX,camera.focusZ),atmosphere,renderer.effects());
         }
         if(gpuEnabled && gpu.submit(submission)){
             meter.record(sceneMs,std::chrono::duration<float,std::milli>(Clock::now()-started).count());
@@ -492,23 +492,48 @@ int cpuPackageSmoke(App& app,bool rendererInitialized){
     log<<"CPU PACKAGE SMOKE: PASS\n";
     return log?0:4;
 }
+int gpuPackageSmoke(App& app,bool rendererInitialized){
+    std::ofstream log("gpu_smoke_test.log",std::ios::trunc);
+    auto check=[&](bool passed,const char* operation){log<<(passed?"OK: ":"FAIL: ")<<operation<<'\n';log.flush();return passed;};
+    if(!log || !check(app.assetsReady,"packaged runtime assets loaded"))return 5;
+    if(!check(rendererInitialized && app.gpu.activeAPI()==gz::GraphicsAPI::Vulkan && app.gpu.nativeSceneReady(),
+              "native Vulkan scene initialized; CPU fallback is rejected")){
+        log<<app.gpu.error()<<'\n';return 5;
+    }
+    app.menuAction(app.menu.activate(0));app.menuAction(app.menu.activate(0));app.deployContract();
+    if(!check(app.campaign.state().contract.stage==gz::ContractStage::Engaged,"contract deployed"))return 5;
+    app.changeMode(gz::ViewMode::Command);
+    app.camera.focusX=3055.5f;app.camera.focusZ=1258.f;app.camera.distance=28;app.camera.pitch=.36f;
+    for(int i=0;i<6;++i){app.sim.step(1);app.paint();}
+    const auto& stats=app.gpu.telemetry();
+    if(!check(app.gpu.activeAPI()==gz::GraphicsAPI::Vulkan && stats.nativeSceneFrames==6 &&
+              stats.materialTextureCount==16 && stats.validationErrors==0,"six native textured Vulkan frames submitted"))return 5;
+    log<<"textures="<<stats.materialTextureCount<<", shadow="<<stats.shadowMapSize<<", MSAA="<<stats.msaaSamples
+       <<", graphics allocations="<<stats.graphicsResidentBytes<<", validation errors="<<stats.validationErrors<<'\n';
+    log<<"GPU PACKAGE SMOKE: PASS\n";return log?0:5;
+}
 }
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
     int argumentCount=0;
     auto* arguments=CommandLineToArgvW(GetCommandLineW(),&argumentCount);
     if(!arguments)return 1;
-    bool smoke=false;
-    for(int i=1;i<argumentCount;++i)if(std::wstring(arguments[i])==L"--smoke-test")smoke=true;
+    bool smoke=false,gpuSmoke=false;
+    for(int i=1;i<argumentCount;++i){
+        if(std::wstring(arguments[i])==L"--smoke-test")smoke=true;
+        if(std::wstring(arguments[i])==L"--gpu-smoke-test")gpuSmoke=true;
+    }
+    if(smoke && gpuSmoke)return 5;
+    const bool packageSmoke=smoke||gpuSmoke;
     LocalFree(arguments);
     // Windows executable is often run from build-win/Release, not project root.
     // Find its assets folder by walking up from the executable directory.
     wchar_t modulePath[32768]{};
     const auto moduleLength=GetModuleFileNameW(nullptr,modulePath,32768);
-    if(smoke && (!moduleLength || moduleLength>=32768))return 3;
+    if(packageSmoke && (!moduleLength || moduleLength>=32768))return 3;
     if(moduleLength){
       std::filesystem::path dir=std::filesystem::path(modulePath).parent_path();
       // Package validation must never borrow missing assets from the checkout.
-      if(smoke){
+      if(packageSmoke){
         if(!SetCurrentDirectoryW(dir.c_str()))return 3;
         if(!std::filesystem::exists(dir / L"assets" / L"europe" / L"europe_vertices.gzm"))return 3;
       }else for(int i=0;i<6;++i){
@@ -521,11 +546,12 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
     }
     App app;
     if(smoke)app.rendererPreference=gz::GraphicsAPI::Software;
+    if(gpuSmoke)app.rendererPreference=gz::GraphicsAPI::Vulkan;
     WNDCLASSEXW wc{};wc.cbSize=sizeof(wc);wc.hInstance=instance;
     wc.lpszClassName=L"GZ89_NATIVE_3D";wc.lpfnWndProc=WindowProc;
     wc.hCursor=LoadCursor(nullptr,IDC_ARROW);wc.hIcon=LoadIcon(nullptr,IDI_APPLICATION);
     if(!RegisterClassExW(&wc))return 1;
-    HWND hwnd=CreateWindowExW(0,wc.lpszClassName,L"GRAY ZONE: 1989 — Combat Prototype 015",WS_OVERLAPPEDWINDOW|WS_VISIBLE,
+    HWND hwnd=CreateWindowExW(0,wc.lpszClassName,L"GRAY ZONE: 1989 — v0.0.23",WS_OVERLAPPEDWINDOW|WS_VISIBLE,
         CW_USEDEFAULT,CW_USEDEFAULT,1150,760,nullptr,nullptr,instance,&app);
     if(!hwnd)return 2;app.hwnd=hwnd;ShowWindow(hwnd,show);
     RECT rc;GetClientRect(hwnd,&rc);app.renderer.resize(rc.right,rc.bottom);
@@ -534,13 +560,13 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
     app.gpuEnabled=app.gpu.usingGPU(); // prefer Vulkan; runtime fallback via GDI
     {
         std::ofstream log("graphics_backend.log",std::ios::app);
-        log<<"GZ89 v013 renderer="<<gz::graphicsAPIName(app.gpu.activeAPI())
+        log<<"GZ89 v0.0.23 renderer="<<gz::graphicsAPIName(app.gpu.activeAPI())
            <<" preference="<<gz::graphicsAPIName(app.rendererPreference)
            <<" status="<<app.gpu.error()<<"\n";
     }
     app.updateSoftwareResolution(rc.right,rc.bottom);
-    if(smoke){
-        const int result=cpuPackageSmoke(app,rendererInitialized);
+    if(packageSmoke){
+        const int result=gpuSmoke?gpuPackageSmoke(app,rendererInitialized):cpuPackageSmoke(app,rendererInitialized);
         app.gpu.shutdown();DestroyWindow(hwnd);
         return result;
     }

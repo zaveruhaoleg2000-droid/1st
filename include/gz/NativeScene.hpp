@@ -13,7 +13,7 @@ inline GeometryView makeGeometryView(const SceneMesh& mesh) {
             mesh.indices.data(),count,mesh.staticVertexBytes,mesh.staticIndexCount,
             mesh.resourceId,mesh.staticRevision,mesh.dynamicRevision};
 }
-inline GpuSceneCamera makeGpuSceneCamera(const Camera& c,float centerHeight,AtmosphereSettings atmosphere){
+inline GpuSceneCamera makeGpuSceneCamera(const Camera& c,float centerHeight,AtmosphereSettings atmosphere,VisualEffects effects={}){
     GpuSceneCamera out{};
     out.focusX=c.focusX;out.focusY=centerHeight+1.f;out.focusZ=c.focusZ;
     out.distance=c.distance;out.pitch=c.pitch;out.yaw=c.yaw;
@@ -21,6 +21,13 @@ inline GpuSceneCamera makeGpuSceneCamera(const Camera& c,float centerHeight,Atmo
     out.sunX=light.sunX;out.sunY=light.sunY;out.sunZ=light.sunZ;
     out.ambient=light.ambient;out.direct=light.direct;
     out.fogStart=light.fogNear;out.fogEnd=light.fogFar;
+    out.sunR=light.sunR;out.sunG=light.sunG;out.sunB=light.sunB;out.shadowStrength=light.shadowOpacity;
+    out.fogR=light.fogR;out.fogG=light.fogG;out.fogB=light.fogB;
+    out.skyR=light.skyR;out.skyG=light.skyG;out.skyB=light.skyB;
+    out.wind=effects.wind?.35f*light.windMultiplier:0.f;
+    out.wetness=light.wetness;out.snowCover=light.snowCover;
+    out.cloudCover=atmosphere.weather==Weather::Clear?.18f:.78f;
+    out.waterReflections=effects.waterReflections;
     out.enabled=true;
     return out;
 }
