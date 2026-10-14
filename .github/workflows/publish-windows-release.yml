@@ -1,0 +1,37 @@
+name: Publish tested Windows build
+on:
+  push:
+    branches: ['release/graphics-v024']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: grayzone-v024-release
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify the tested package
+        run: sha256sum -c GRAY_ZONE_1989_v024_WIN_X64.zip.sha256
+      - name: Publish Windows package and source
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          GZ_RELEASE_TAG=v0.0.24
+          GZ_SOURCE_COMMIT=$(cat SOURCE_COMMIT.txt)
+          if gh release view "$GZ_RELEASE_TAG" >/dev/null 2>&1; then
+            echo 'Release already exists; existing assets are preserved.'
+            exit 0
+          fi
+          gh release create "$GZ_RELEASE_TAG" \
+            GRAY_ZONE_1989_v024_WIN_X64.zip \
+            GRAY_ZONE_1989_v024_WIN_X64.zip.sha256 \
+            GRAY_ZONE_1989_v024_SOURCE.zip GRAY_ZONE_1989_v024_REVIEW_UA.html previews/*.png \
+            --target "$GZ_SOURCE_COMMIT" --prerelease \
+            --title 'GRAY ZONE: 1989 v0.0.24 — HUD / generated terrain / Windows x64' \
+            --notes-file RELEASE_UA.md
