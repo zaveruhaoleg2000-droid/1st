@@ -1,0 +1,35 @@
+name: Publish updates chronology presentation
+on:
+  push:
+    branches: ['release/graphics-v026']
+    paths:
+      - 'GRAY_ZONE_1989_UPDATES_TIMELINE_UA.*'
+      - 'UPDATES_TIMELINE_UA.md'
+      - '.github/workflows/publish-chronology.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: grayzone-updates-chronology
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify presentation files
+        run: sha256sum -c GRAY_ZONE_1989_UPDATES_TIMELINE_UA.sha256
+      - name: Add the chronology to the existing release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release view v0.0.26 >/dev/null
+          gh release upload v0.0.26 \
+            GRAY_ZONE_1989_UPDATES_TIMELINE_UA.pdf \
+            GRAY_ZONE_1989_UPDATES_TIMELINE_UA.html \
+            GRAY_ZONE_1989_UPDATES_TIMELINE_UA.sha256 \
+            UPDATES_TIMELINE_UA.md
+          # No --clobber: existing game builds and presentations are preserved.
