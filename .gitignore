@@ -37,3 +37,4 @@ gpu_probe.txt
 # Screenshots generated while testing; source assets remain versioned
 preview_*.ppm
 test_build_*.ppm
+test_combat_*.ppm

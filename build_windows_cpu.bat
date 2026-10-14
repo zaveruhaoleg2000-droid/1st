@@ -15,5 +15,8 @@ ctest --test-dir build-win-cpu -C Release --output-on-failure
 if errorlevel 1 exit /b 1
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\package_windows.ps1" -BuildDir "build-win-cpu" -DistDir "dist-win-cpu" -Mode "CPU fallback"
 if errorlevel 1 exit /b 1
+echo [GRAY ZONE] Validating the packaged CPU executable...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\verify_windows_package.ps1" -DistDir "dist-win-cpu"
+if errorlevel 1 exit /b 1
 echo SUCCESS: dist-win-cpu\PLAY.bat
 exit /b 0

@@ -2,6 +2,9 @@
 
 Це **вихідний код**, а не Windows EXE. Архів сформовано з останнього доступного проєкту **v0.0.22**, без тимчасових збірок і стороннього концепт-арту. Всередині повний `src/`, `include/`, `tests/`, `assets/` та CMake.
 
+Результати першого етапу модернізації, актуальні Debug/Release-перевірки й
+Windows CPU smoke-test: [MODERNIZATION_PHASE1_UA.md](docs/MODERNIZATION_PHASE1_UA.md).
+
 ## Як почати на Windows 11
 
 1. Розпакуй ZIP у звичайну папку, наприклад `C:\GamesDev\GRAY_ZONE_1989`.

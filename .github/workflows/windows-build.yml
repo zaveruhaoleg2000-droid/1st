@@ -1,35 +1,66 @@
-name: GRAY ZONE Windows CPU compatibility CI (Vulkan SDK not bundled)
+name: GRAY ZONE CPU Debug and Release validation
 on:
   push:
+  pull_request:
   workflow_dispatch:
+permissions:
+  contents: read
 jobs:
-  windows-x64-compatibility:
-    runs-on: windows-2022
+  linux-cpu:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, Release]
     steps:
       - uses: actions/checkout@v4
-      # Vulkan SDK is NOT preinstalled on all hosted Windows runners. This job
-      # tests Windows app/CPU fallback. To build Vulkan, use build_windows.bat
-      # on a Vulkan SDK machine with GZ_REQUIRE_VULKAN=ON.
-      - name: Configure Visual Studio x64 (CPU fallback only)
-        run: cmake -S . -B build-win -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DGZ_ENABLE_VULKAN=OFF -DGZ_REQUIRE_VULKAN=OFF
-      - name: Build Windows compatibility executable
-        run: cmake --build build-win --config Release --parallel 4
-      - name: Run C++ regression tests
-        run: ctest --test-dir build-win -C Release --output-on-failure
-      - name: Package and identify CPU fallback build
-        shell: pwsh
+      - name: Install CPU and headless window prerequisites
         run: |
-          New-Item -ItemType Directory -Force -Path dist/assets/textures | Out-Null
-          Copy-Item build-win/Release/GRAY_ZONE_1989.exe dist/
-          foreach ($d in @('europe','ui','terrain','shaders','politics','scenarios','lore','audio')) {
-            Copy-Item "assets/$d" "dist/assets/$d" -Recurse
-          }
-          Copy-Item assets/textures/runtime dist/assets/textures/runtime -Recurse
-          'This artifact is a Windows CPU-compatibility test build. No Vulkan SDK/GPU backend was verified in CI.' | Set-Content -Encoding UTF8 dist/GPU_STATUS.txt
-          '@echo off' | Set-Content -Encoding ASCII dist/PLAY.bat
-          'cd /d "%~dp0"' | Add-Content -Encoding ASCII dist/PLAY.bat
-          'start "" "GRAY_ZONE_1989.exe"' | Add-Content -Encoding ASCII dist/PLAY.bat
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake g++ libx11-dev xvfb xauth libsdl2-2.0-0
+      - name: Configure CPU fallback
+        run: cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=${{ matrix.configuration }} -DBUILD_TESTING=ON -DGZ_ENABLE_VULKAN=OFF -DGZ_REQUIRE_VULKAN=OFF
+      - name: Build
+        run: cmake --build build-linux --parallel 4
+      - name: Run regression tests and X11 startup
+        run: ctest --test-dir build-linux --output-on-failure --no-tests=error --parallel 4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-cpu-${{ matrix.configuration }}-test-log
+          path: build-linux/Testing/Temporary/LastTest.log
+  windows-x64-cpu:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+      # This validates CPU fallback. Native Vulkan needs its own SDK/driver run.
+      - name: Configure Visual Studio x64 CPU fallback
+        run: cmake -S . -B build-win -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DGZ_ENABLE_VULKAN=OFF -DGZ_REQUIRE_VULKAN=OFF
+      - name: Build
+        run: cmake --build build-win --config ${{ matrix.configuration }} --parallel 4
+      - name: Run regression tests
+        run: ctest --test-dir build-win -C ${{ matrix.configuration }} --output-on-failure --no-tests=error --parallel 4
+      - name: Package all assets and CPU executable
+        shell: pwsh
+        run: ./scripts/package_windows.ps1 -BuildDir build-win -DistDir dist-win-cpu -Mode 'CPU fallback' -Configuration '${{ matrix.configuration }}'
+      - name: Verify assets and run the packaged game
+        shell: pwsh
+        run: ./scripts/verify_windows_package.ps1 -DistDir dist-win-cpu
       - uses: actions/upload-artifact@v4
         with:
-          name: GRAY_ZONE_1989_v022_Windows_CPU_Compatibility_NotVulkan
-          path: dist/
+          name: GRAY_ZONE_1989_Windows_CPU_${{ matrix.configuration }}
+          path: dist-win-cpu/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-cpu-${{ matrix.configuration }}-test-logs
+          path: |
+            build-win/Testing/Temporary/LastTest.log
+            dist-win-cpu/smoke_test.log
+            dist-win-cpu/graphics_backend.log

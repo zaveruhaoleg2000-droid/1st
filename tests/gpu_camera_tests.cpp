@@ -2,7 +2,7 @@
 #include "gz/RenderBackend.hpp"
 #include "gz/SceneMesh.hpp"
 #include "gz/NativeScene.hpp"
-#include <cassert>
+#include "TestCheck.hpp"
 #include <cmath>
 #include <iostream>
 static float mulRow(const float* m,int row,float x,float y,float z){
@@ -15,20 +15,28 @@ int main(){
     auto clipX=mulRow(u.viewProjection,0,c.focusX,c.focusY,c.focusZ);
     auto clipY=mulRow(u.viewProjection,1,c.focusX,c.focusY,c.focusZ);
     auto clipZ=mulRow(u.viewProjection,2,c.focusX,c.focusY,c.focusZ);
-    assert(std::abs(clipW-c.distance)<.05f);
-    assert(std::abs(clipX)<.005f*clipW);
-    assert(std::abs(clipY)<.005f*clipW);
-    assert(clipZ/clipW>0.f && clipZ/clipW<1.f);
-    auto nearPoint=gz::makeGpuFrameConstants(c,1920,1080,30.f);
-    assert(std::abs(nearPoint.viewProjection[0]-u.viewProjection[0])<.01f);
+    GZ_CHECK(std::abs(clipW-c.distance)<.05f);
+    GZ_CHECK(std::abs(clipX)<.005f*clipW);
+    GZ_CHECK(std::abs(clipY)<.005f*clipW);
+    GZ_CHECK(clipZ/clipW>0.f && clipZ/clipW<1.f);
+    const auto doubled=gz::makeGpuFrameConstants(c,1920,1200,30.f);
+    for(int i=0;i<16;++i)
+        GZ_CHECK(std::abs(doubled.viewProjection[i]-u.viewProjection[i])<.01f);
+    // A wider aspect changes the horizontal scale, not the vertical projection.
+    const auto widescreen=gz::makeGpuFrameConstants(c,1920,1080,30.f);
+    for(int column=0;column<4;++column) {
+        GZ_CHECK(std::abs(widescreen.viewProjection[column*4]-.9f*u.viewProjection[column*4])<.01f);
+        for(int row=1;row<4;++row)
+            GZ_CHECK(std::abs(widescreen.viewProjection[column*4+row]-u.viewProjection[column*4+row])<.01f);
+    }
     gz::GeometryView gv{};
-    assert(!gv.valid());
+    GZ_CHECK(!gv.valid());
     gz::SceneMesh mesh{};gz::SceneMeshBuilder::addTree(mesh,10,0,20,1.f,128);
     gv={mesh.vertices.data(),mesh.vertices.size()*sizeof(gz::SceneVertex),sizeof(gz::SceneVertex),mesh.indices.data(),mesh.indices.size()};
-    assert(gv.valid() && gv.strideBytes==48u);
+    GZ_CHECK(gv.valid() && gv.strideBytes==48u);
     auto nativeView=gz::makeGeometryView(mesh);
-    assert(nativeView.valid() && nativeView.indexCount==mesh.indices.size());
+    GZ_CHECK(nativeView.valid() && nativeView.indexCount==mesh.indices.size());
     auto camera=gz::makeGpuSceneCamera(gz::Camera{},3.f,{});
-    assert(camera.enabled && std::isfinite(camera.focusY));
+    GZ_CHECK(camera.enabled && std::isfinite(camera.focusY));
     std::cout<<"GPU camera projection, push constants and native mesh layout: PASS\n";
 }

@@ -3,6 +3,7 @@
 #define NOMINMAX
 #include <windows.h>
 #include <windowsx.h>
+#include <shellapi.h>
 #include "gz/Renderer.hpp"
 #include "gz/Menu.hpp"
 #include "gz/Campaign.hpp"
@@ -51,16 +52,21 @@ struct App {
     int globalReliefPreset=1; // low/medium/high; default flatter than v0.0.12
     gz::ShaderQuality shaderQuality=gz::ShaderQuality::Balanced;
     bool shaderReloadFailed=false;
+    bool assetsReady=false;
     gz::AtmosphereSettings atmosphere{};
     Clock::time_point visualStart=Clock::now();
     App(){
         sim.newOperation(96);
-        scenarios.loadDirectory("assets/scenarios");
+        const bool scenariosReady=scenarios.loadDirectory("assets/scenarios");
         renderer.resize(960,600);
         renderer.setTerrainDirectory("assets/terrain");gpuTerrain.setTileDirectory("assets/terrain");
-        debugHud.load("assets/ui/glyphs.pgm");
-        menuScene.load("assets/europe/europe_vertices.gzm","assets/ui/glyphs.pgm","assets/ui/advances.bin");
-        readSettings();renderer.loadTextures("assets/textures/runtime",textureResolution);applyMenuEffects();applyAtmosphere();refreshSaves();
+        const bool hudReady=debugHud.load("assets/ui/glyphs.pgm");
+        const bool menuReady=menuScene.load("assets/europe/europe_vertices.gzm","assets/ui/glyphs.pgm","assets/ui/advances.bin");
+        readSettings();
+        const auto textures=renderer.loadTextures("assets/textures/runtime",textureResolution);
+        assetsReady=scenariosReady && hudReady && menuReady &&
+            textures==std::size_t(gz::TextureMaterial::Count)-1;
+        applyMenuEffects();applyAtmosphere();refreshSaves();
     }
     void updateSoftwareResolution(int clientW,int clientH){
         // Keep software fallback at a lower internal resolution. StretchDIBits
@@ -157,7 +163,7 @@ struct App {
     }
     void menuMouse(int x,int y,bool click){
         RECT r{};GetClientRect(hwnd,&r);
-        int px=x*renderer.width()/std::max(1,r.right),py=y*renderer.height()/std::max(1,r.bottom);
+        int px=x*renderer.width()/std::max<LONG>(1,r.right),py=y*renderer.height()/std::max<LONG>(1,r.bottom);
         int row=gz::MenuState::hitRow(px,py,renderer.width(),renderer.height());
         if(row>=0){if(menu.selected!=row)audio.play(gz::SoundCue::Hover);menu.selected=row;if(click){audio.play(gz::SoundCue::Confirm);menuAction(menu.activate(row));}}
     }
@@ -225,14 +231,14 @@ struct App {
         if(sim.mode()==gz::ViewMode::GlobalAI){
             if(msg==WM_LBUTTONDOWN){
                 RECT r;GetClientRect(hwnd,&r);
-                const int x=screenX*renderer.width()/std::max(1,r.right);
-                const int y=screenY*renderer.height()/std::max(1,r.bottom);
+                const int x=screenX*renderer.width()/std::max<LONG>(1,r.right);
+                const int y=screenY*renderer.height()/std::max<LONG>(1,r.bottom);
                 if(renderer.selectGlobalAt(x,y))audio.play(gz::SoundCue::Hover);
             }
             return;
         }
         RECT r;GetClientRect(hwnd,&r);
-        int x=screenX*renderer.width()/std::max(1,r.right),y=screenY*renderer.height()/std::max(1,r.bottom);
+        int x=screenX*renderer.width()/std::max<LONG>(1,r.right),y=screenY*renderer.height()/std::max<LONG>(1,r.bottom);
         if(msg==WM_LBUTTONDOWN){
             double best=900.0;int bestID=-1;
             for(std::size_t i=0;i<sim.squadCount();++i){
@@ -450,14 +456,62 @@ LRESULT CALLBACK WindowProc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp){
     }
     return DefWindowProcW(hwnd,message,wp,lp);
 }
+int cpuPackageSmoke(App& app,bool rendererInitialized){
+    std::ofstream log("smoke_test.log",std::ios::trunc);
+    if(!log)return 4;
+    auto check=[&](bool passed,const char* operation){
+        log<<(passed?"OK: ":"FAIL: ")<<operation<<'\n';log.flush();
+        return passed;
+    };
+    if(!check(app.assetsReady,"menu, scenarios, glyphs and all runtime textures loaded"))return 4;
+    if(!check(rendererInitialized && app.gpu.activeAPI()==gz::GraphicsAPI::Software,
+              "software renderer initialized"))return 4;
+    app.paint();
+    if(!check(app.menuScene.savePPM("test_build_windows_menu.ppm"),"menu frame written"))return 4;
+    app.menuAction(app.menu.activate(0));
+    app.menuAction(app.menu.activate(0));
+    if(!check(app.menu.page==gz::MenuPage::Playing && app.campaign.active(),
+              "menu started first campaign"))return 4;
+    app.deployContract();
+    if(!check(app.campaign.state().contract.stage==gz::ContractStage::Engaged,
+              "contract deployed"))return 4;
+    for(int i=0;i<2400 && app.campaign.state().contract.stage==gz::ContractStage::Engaged;++i){
+        app.sim.step(1);app.campaign.update(app.sim,app.scenarios);
+    }
+    if(!check(app.sim.ticks()>0 && app.sim.stats().shots>0,"battle simulation produced shots"))return 4;
+    const auto stage=app.campaign.state().contract.stage;
+    if(!check(stage==gz::ContractStage::Victory || stage==gz::ContractStage::Defeat,
+              "contract reached a terminal outcome"))return 4;
+    log<<"Battle result: "<<gz::contractStageName(stage)<<", ticks="<<app.sim.ticks()
+       <<", shots="<<app.sim.stats().shots<<'\n';
+    app.paint();
+    if(!check(app.renderer.lastTriangles()>500 &&
+              app.renderer.savePPM("test_build_windows_tactical.ppm"),"tactical frame written"))return 4;
+    app.changeMode(gz::ViewMode::GlobalAI);app.paint();
+    if(!check(app.renderer.savePPM("test_build_windows_global.ppm"),"strategic frame written"))return 4;
+    log<<"CPU PACKAGE SMOKE: PASS\n";
+    return log?0:4;
+}
 }
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
+    int argumentCount=0;
+    auto* arguments=CommandLineToArgvW(GetCommandLineW(),&argumentCount);
+    if(!arguments)return 1;
+    bool smoke=false;
+    for(int i=1;i<argumentCount;++i)if(std::wstring(arguments[i])==L"--smoke-test")smoke=true;
+    LocalFree(arguments);
     // Windows executable is often run from build-win/Release, not project root.
     // Find its assets folder by walking up from the executable directory.
     wchar_t modulePath[32768]{};
-    if(GetModuleFileNameW(nullptr,modulePath,32768)){
+    const auto moduleLength=GetModuleFileNameW(nullptr,modulePath,32768);
+    if(smoke && (!moduleLength || moduleLength>=32768))return 3;
+    if(moduleLength){
       std::filesystem::path dir=std::filesystem::path(modulePath).parent_path();
-      for(int i=0;i<6;++i){
+      // Package validation must never borrow missing assets from the checkout.
+      if(smoke){
+        if(!SetCurrentDirectoryW(dir.c_str()))return 3;
+        if(!std::filesystem::exists(dir / L"assets" / L"europe" / L"europe_vertices.gzm"))return 3;
+      }else for(int i=0;i<6;++i){
         if(std::filesystem::exists(dir / L"assets" / L"europe" / L"europe_vertices.gzm")){
           SetCurrentDirectoryW(dir.c_str());break;
         }
@@ -466,6 +520,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
       }
     }
     App app;
+    if(smoke)app.rendererPreference=gz::GraphicsAPI::Software;
     WNDCLASSEXW wc{};wc.cbSize=sizeof(wc);wc.hInstance=instance;
     wc.lpszClassName=L"GZ89_NATIVE_3D";wc.lpfnWndProc=WindowProc;
     wc.hCursor=LoadCursor(nullptr,IDC_ARROW);wc.hIcon=LoadIcon(nullptr,IDI_APPLICATION);
@@ -474,7 +529,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
         CW_USEDEFAULT,CW_USEDEFAULT,1150,760,nullptr,nullptr,instance,&app);
     if(!hwnd)return 2;app.hwnd=hwnd;ShowWindow(hwnd,show);
     RECT rc;GetClientRect(hwnd,&rc);app.renderer.resize(rc.right,rc.bottom);
-    app.gpu.initialize({gz::WindowSystem::Win32,nullptr,reinterpret_cast<std::uintptr_t>(hwnd),
+    const bool rendererInitialized=app.gpu.initialize({gz::WindowSystem::Win32,nullptr,reinterpret_cast<std::uintptr_t>(hwnd),
                         std::uint32_t(rc.right),std::uint32_t(rc.bottom)},app.rendererPreference);
     app.gpuEnabled=app.gpu.usingGPU(); // prefer Vulkan; runtime fallback via GDI
     {
@@ -484,6 +539,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
            <<" status="<<app.gpu.error()<<"\n";
     }
     app.updateSoftwareResolution(rc.right,rc.bottom);
+    if(smoke){
+        const int result=cpuPackageSmoke(app,rendererInitialized);
+        app.gpu.shutdown();DestroyWindow(hwnd);
+        return result;
+    }
     app.audio.start();app.audio.setEnvironment(gz::AudioEnvironment::Menu);
     auto previous=Clock::now();double accumulator=0;
     auto frameBucket=Clock::now();unsigned frameCounter=0;

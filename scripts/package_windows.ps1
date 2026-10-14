@@ -1,11 +1,12 @@
 param(
     [Parameter(Mandatory=$true)][string]$BuildDir,
     [Parameter(Mandatory=$true)][string]$DistDir,
-    [Parameter(Mandatory=$true)][string]$Mode
+    [Parameter(Mandatory=$true)][string]$Mode,
+    [ValidateSet('Debug','Release','RelWithDebInfo','MinSizeRel')][string]$Configuration = 'Release'
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$srcExe = Join-Path $root (Join-Path $BuildDir 'Release\GRAY_ZONE_1989.exe')
+$srcExe = Join-Path $root (Join-Path $BuildDir "$Configuration\GRAY_ZONE_1989.exe")
 if (-not (Test-Path $srcExe)) { throw "Windows EXE not built: $srcExe" }
 $dest = Join-Path $root $DistDir
 New-Item -ItemType Directory -Path $dest -Force | Out-Null
