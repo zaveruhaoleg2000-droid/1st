@@ -1,0 +1,12 @@
+# Treat proprietary generated asset formats as binary
+*.gzt binary
+*.gzm binary
+*.gzp binary
+*.gzs binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ogg binary
+*.wav binary
+*.pgm binary
+*.ppm binary

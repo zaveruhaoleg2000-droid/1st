@@ -1,0 +1,39 @@
+# Generated builds, executables and IDE state
+/build*/
+/out/
+/dist*/
+/.vs/
+/.vscode/
+/.idea/
+/CMakeFiles/
+/CMakeCache.txt
+/Testing/
+*.obj
+*.o
+*.a
+*.lib
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.exp
+*.tlog
+*.lastbuildstate
+*.VC.db
+*.VC.opendb
+*.sln
+*.vcxproj*
+*.ninja
+
+# Logs and diagnostics generated on a local machine
+*.log
+gpu_probe.txt
+*.user
+*.tmp
+
+# Generated shader products (shader *sources* are kept)
+*.spv
+
+# Screenshots generated while testing; source assets remain versioned
+preview_*.ppm
+test_build_*.ppm

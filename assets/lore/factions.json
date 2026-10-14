@@ -1,0 +1,349 @@
+{
+  "world": "GRAY ZONE: 1989",
+  "factions": [
+    {
+      "id": "poland",
+      "name": "Польська Республіка",
+      "authority": "Рада національної оборони",
+      "capital": "Варшава",
+      "objective": "Відстояти державність, не стати придатком НАТО чи радянської номенклатури.",
+      "history": "Уряд тримається на компромісі генералів, «Солідарності» й страйкових комітетів. Кожна евакуація архіву може бути важливішою за втрачену бригаду.",
+      "companies": [
+        {
+          "id": "poland_1",
+          "name": "Вісла-7",
+          "commander": "Марта Журавська",
+          "speciality": "Сапери й інженерна оборона",
+          "public_reputation": "Рятують мости для мирних, але підривають їх за наказом.",
+          "secret_aim": "Сховати докази зникнення міністра.",
+          "flag_atlas_index": 0,
+          "portrait_atlas_index": 0,
+          "starting_trait": "discipline"
+        },
+        {
+          "id": "poland_2",
+          "name": "Сірий Орел",
+          "commander": "Ян Дольський",
+          "speciality": "Механізовані рейди",
+          "public_reputation": "Колишні контрактники, що воюють тільки на польській землі.",
+          "secret_aim": "Знайти втрачену колону з банківським золотом.",
+          "flag_atlas_index": 1,
+          "portrait_atlas_index": 1,
+          "starting_trait": "intelligence"
+        },
+        {
+          "id": "poland_3",
+          "name": "Кедр-13",
+          "commander": "Аліція Лентовська",
+          "speciality": "Розвідка та зв'язок",
+          "public_reputation": "Сітка цивільних кур'єрів, радіоаматорів та прикордонників.",
+          "secret_aim": "Публікувати правду, навіть якщо вона розпалить заколот.",
+          "flag_atlas_index": 2,
+          "portrait_atlas_index": 2,
+          "starting_trait": "logistics"
+        }
+      ]
+    },
+    {
+      "id": "rsfsr",
+      "name": "Російська РФСР",
+      "authority": "Надзвичайний оперативний комітет",
+      "capital": "Москва",
+      "objective": "Зберегти контроль над військовими округами й не допустити розпаду союзного командування.",
+      "history": "Московські силові групи не погоджуються, хто віддав наказ на перехід кордону. Армія одна, але накази взаємно виключають один одного.",
+      "companies": [
+        {
+          "id": "rsfsr_1",
+          "name": "Червоний Коршун",
+          "commander": "Павло Нестеров",
+          "speciality": "Десант і швидкі операції",
+          "public_reputation": "Офіцери-ветерани Афганістану; цінують своїх понад штаб.",
+          "secret_aim": "Вивести зі сховища «Протокол Скло».",
+          "flag_atlas_index": 3,
+          "portrait_atlas_index": 3,
+          "starting_trait": "discipline"
+        },
+        {
+          "id": "rsfsr_2",
+          "name": "Меридіан-4",
+          "commander": "Ігор Бєлоконь",
+          "speciality": "Радіоелектронна розвідка",
+          "public_reputation": "Вони продають доступ до каналів, не беручи участі у відкритих боях.",
+          "secret_aim": "Відновити накази, стерті 18 березня.",
+          "flag_atlas_index": 4,
+          "portrait_atlas_index": 4,
+          "starting_trait": "intelligence"
+        },
+        {
+          "id": "rsfsr_3",
+          "name": "Бастіон Північ",
+          "commander": "Віра Орлова",
+          "speciality": "Охорона й артилерійська підтримка",
+          "public_reputation": "Добре озброєна приватна варта складів, яку наймають кілька штабів.",
+          "secret_aim": "Заблокувати переговори про автономію республік.",
+          "flag_atlas_index": 5,
+          "portrait_atlas_index": 5,
+          "starting_trait": "logistics"
+        }
+      ]
+    },
+    {
+      "id": "ukrssr",
+      "name": "Українська РСР",
+      "authority": "Київський комітет територіальної безпеки",
+      "capital": "Київ",
+      "objective": "Не допустити втягування республіки в безкінечну війну за чужі політичні рішення.",
+      "history": "Дискусія про повноваження Києва виходить із газет у гарнізони. Партійні кадри, офіцери й незалежні громади тимчасово охороняють одні дороги.",
+      "companies": [
+        {
+          "id": "ukrssr_1",
+          "name": "Січ-89",
+          "commander": "Олена Мороз",
+          "speciality": "Охорона інфраструктури",
+          "public_reputation": "Екіпажі танкоремонтників і ветерани розвідки взялися захищати залізницю.",
+          "secret_aim": "Не дати знищити архів аварій атомних станцій.",
+          "flag_atlas_index": 6,
+          "portrait_atlas_index": 6,
+          "starting_trait": "discipline"
+        },
+        {
+          "id": "ukrssr_2",
+          "name": "Степовий Вітер",
+          "commander": "Дмитро Романчук",
+          "speciality": "Мобільна піхота",
+          "public_reputation": "Їхні машини зроблені з того, що було в районних майстернях.",
+          "secret_aim": "Розкрити канал постачання таємної зброї.",
+          "flag_atlas_index": 7,
+          "portrait_atlas_index": 7,
+          "starting_trait": "intelligence"
+        },
+        {
+          "id": "ukrssr_3",
+          "name": "Дніпровський Рубіж",
+          "commander": "Ірина Ткач",
+          "speciality": "ППО та радіолокація",
+          "public_reputation": "Малі групи з великим досвідом, без єдиного фінансування.",
+          "secret_aim": "Захистити міста від провокаційної авіації.",
+          "flag_atlas_index": 8,
+          "portrait_atlas_index": 8,
+          "starting_trait": "logistics"
+        }
+      ]
+    },
+    {
+      "id": "belssr",
+      "name": "Білоруська РСР",
+      "authority": "Мінський оборонний комітет",
+      "capital": "Мінськ",
+      "objective": "Утримати залізничні вузли й уникнути гуманітарної катастрофи між фронтами.",
+      "history": "Мінськ став єдиним великим перевалочним пунктом між військовими командуваннями, що більше не довіряють одне одному.",
+      "companies": [
+        {
+          "id": "belssr_1",
+          "name": "Поліський Щит",
+          "commander": "Антон Бурак",
+          "speciality": "Оборона та евакуація",
+          "public_reputation": "Лісничі, інженери і військові зв'язківці.",
+          "secret_aim": "Знайти зниклий санітарний поїзд.",
+          "flag_atlas_index": 9,
+          "portrait_atlas_index": 9,
+          "starting_trait": "discipline"
+        },
+        {
+          "id": "belssr_2",
+          "name": "Сніговий Птах",
+          "commander": "Ніна Верес",
+          "speciality": "Контррозвідка",
+          "public_reputation": "Їхня зброя — списки, паролі та паспорти.",
+          "secret_aim": "Викрити подвійного агента в Мінську.",
+          "flag_atlas_index": 10,
+          "portrait_atlas_index": 10,
+          "starting_trait": "intelligence"
+        },
+        {
+          "id": "belssr_3",
+          "name": "Міст-21",
+          "commander": "Сергій Лісовий",
+          "speciality": "Логістика та понтони",
+          "public_reputation": "Власники мостів у війні володіють дорогами.",
+          "secret_aim": "Утримати нейтральний коридор для біженців.",
+          "flag_atlas_index": 11,
+          "portrait_atlas_index": 11,
+          "starting_trait": "logistics"
+        }
+      ]
+    },
+    {
+      "id": "baltic",
+      "name": "Балтійська рада",
+      "authority": "Неофіційний конгрес міст",
+      "capital": "Вільнюс / Рига / Таллінн",
+      "objective": "Вибороти автономію та захистити цивільних від посилення надзвичайного стану.",
+      "history": "Три республіки прагнуть спільної дипломатичної позиції, але порти, мова і гарнізони створюють гострі суперечки.",
+      "companies": [
+        {
+          "id": "baltic_1",
+          "name": "Бурштинова Варша",
+          "commander": "Лайма Озола",
+          "speciality": "Портова охорона",
+          "public_reputation": "Моряки й митники, що першими побачили рух таємних вантажів.",
+          "secret_aim": "Перевірити контейнер під кодом АМБРА.",
+          "flag_atlas_index": 12,
+          "portrait_atlas_index": 12,
+          "starting_trait": "discipline"
+        },
+        {
+          "id": "baltic_2",
+          "name": "Вовки Дауґави",
+          "commander": "Артурс Калніньш",
+          "speciality": "Міські рейди",
+          "public_reputation": "Мобільні загони навколо Риги; міцні, але політично роз'єднані.",
+          "secret_aim": "Захопити радіостанцію до трансляції наказу.",
+          "flag_atlas_index": 13,
+          "portrait_atlas_index": 13,
+          "starting_trait": "intelligence"
+        },
+        {
+          "id": "baltic_3",
+          "name": "Туман Нарви",
+          "commander": "Ееро Саар",
+          "speciality": "Спостереження та зв'язок",
+          "public_reputation": "Вони чують увесь регіон, але мають мало людей.",
+          "secret_aim": "Забезпечити доказову базу переговорів.",
+          "flag_atlas_index": 14,
+          "portrait_atlas_index": 14,
+          "starting_trait": "logistics"
+        }
+      ]
+    },
+    {
+      "id": "underground",
+      "name": "Українське підпілля",
+      "authority": "Мережа незалежних комітетів",
+      "capital": "Львів / Київ",
+      "objective": "Самоврядування й право на рішення без зовнішнього військового диктату.",
+      "history": "Частина підпілля прагне ненасильницького переходу. Інші вважають, що в цьому світі компроміси не переживають першого блокпоста.",
+      "companies": [
+        {
+          "id": "underground_1",
+          "name": "Тиха Січ",
+          "commander": "Богдан Ярема",
+          "speciality": "Підпільні маршрути",
+          "public_reputation": "Їх не впізнати за уніформою: в них її немає.",
+          "secret_aim": "Знайти людину, що уклала таємну угоду.",
+          "flag_atlas_index": 15,
+          "portrait_atlas_index": 15,
+          "starting_trait": "discipline"
+        },
+        {
+          "id": "underground_2",
+          "name": "Чорний Барвінок",
+          "commander": "Соломія Гай",
+          "speciality": "Диверсійні операції",
+          "public_reputation": "Молоді радикали й досвідчені техніки.",
+          "secret_aim": "Не допустити операції, що вб'є мирних.",
+          "flag_atlas_index": 16,
+          "portrait_atlas_index": 16,
+          "starting_trait": "intelligence"
+        },
+        {
+          "id": "underground_3",
+          "name": "Варта Свободи",
+          "commander": "Лев Савчук",
+          "speciality": "Захист громад",
+          "public_reputation": "Інженери та добровольці, які відмовляються від невибіркової сили.",
+          "secret_aim": "Відкрити перевірені цивільні коридори.",
+          "flag_atlas_index": 17,
+          "portrait_atlas_index": 17,
+          "starting_trait": "logistics"
+        }
+      ]
+    },
+    {
+      "id": "hungarian",
+      "name": "Угорські автономісти",
+      "authority": "Карпатський комітет",
+      "capital": "Будапешт",
+      "objective": "Переписати договір про безпеку Угорщини, доки сусіди зайняті великою війною.",
+      "history": "Угорські генерали приховують суперечності між реформістами й прихильниками жорсткого курсу. Різні загони вважають себе єдиною законною владою.",
+      "companies": [
+        {
+          "id": "hungarian_1",
+          "name": "Тиса",
+          "commander": "Міклош Варґа",
+          "speciality": "Річкові операції",
+          "public_reputation": "Контролюють переправи, рятуючи при цьому контрабанду.",
+          "secret_aim": "Відрізати постачання радикалам.",
+          "flag_atlas_index": 18,
+          "portrait_atlas_index": 18,
+          "starting_trait": "discipline"
+        },
+        {
+          "id": "hungarian_2",
+          "name": "Залізний Турол",
+          "commander": "Естер Надь",
+          "speciality": "Механізована оборона",
+          "public_reputation": "Має старі танки й найкращих механіків у регіоні.",
+          "secret_aim": "Створити коридор до Будапешта.",
+          "flag_atlas_index": 19,
+          "portrait_atlas_index": 19,
+          "starting_trait": "intelligence"
+        },
+        {
+          "id": "hungarian_3",
+          "name": "Дунайський Архів",
+          "commander": "Балаж Сабо",
+          "speciality": "Розвідка та фінанси",
+          "public_reputation": "Банкіри у формі — купують вплив швидше за кулі.",
+          "secret_aim": "Знайти розрахунки за підроблені контракти.",
+          "flag_atlas_index": 20,
+          "portrait_atlas_index": 20,
+          "starting_trait": "logistics"
+        }
+      ]
+    },
+    {
+      "id": "nato",
+      "name": "США / НАТО",
+      "authority": "Атлантичний координаційний штаб",
+      "capital": "Бонн / Брюссель",
+      "objective": "Стримування війни, захист союзників та уникнення прямого ядерного конфлікту.",
+      "history": "Пентагон, британська розвідка й європейські уряди не погоджуються щодо допустимого ризику. ЧВК створюють можливість відступу від офіційної відповідальності.",
+      "companies": [
+        {
+          "id": "nato_1",
+          "name": "Blackwood International",
+          "commander": "Едвард Ґрей",
+          "speciality": "Охорона, контртерор",
+          "public_reputation": "Контракти проходять через три країни; жодна не визнає його командування.",
+          "secret_aim": "Вилучити «Протокол Скло» до публікації.",
+          "flag_atlas_index": 21,
+          "portrait_atlas_index": 21,
+          "starting_trait": "discipline"
+        },
+        {
+          "id": "nato_2",
+          "name": "Silver Fox",
+          "commander": "Клер Лефевр",
+          "speciality": "Розвідка й електроніка",
+          "public_reputation": "Команда з мінімальною чисельністю й дорогими контактами.",
+          "secret_aim": "З'ясувати, хто підмінив канали зв'язку НАТО.",
+          "flag_atlas_index": 22,
+          "portrait_atlas_index": 22,
+          "starting_trait": "intelligence"
+        },
+        {
+          "id": "nato_3",
+          "name": "Ironwatch",
+          "commander": "Майкл Рід",
+          "speciality": "Механізована допомога",
+          "public_reputation": "Їх використовують там, де політикам потрібна формула «не наші військові».",
+          "secret_aim": "Захистити гуманітарні конвої без згоди штабу.",
+          "flag_atlas_index": 23,
+          "portrait_atlas_index": 23,
+          "starting_trait": "logistics"
+        }
+      ]
+    }
+  ]
+}

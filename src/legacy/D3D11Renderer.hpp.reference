@@ -1,0 +1,31 @@
+#pragma once
+#ifdef _WIN32
+#include "gz/SceneMesh.hpp"
+#include "gz/Shaders.hpp"
+#include <windows.h>
+#include <memory>
+#include <string>
+namespace gz {
+// Native Windows GPU path. Falls back to Renderer (software) on init/render error.
+class D3D11Renderer {
+public:
+    D3D11Renderer();
+    ~D3D11Renderer();
+    D3D11Renderer(const D3D11Renderer&)=delete;
+    D3D11Renderer& operator=(const D3D11Renderer&)=delete;
+    bool initialize(HWND hwnd);
+    bool resize(int width,int height);
+    bool setShaderQuality(ShaderQuality quality);
+    bool reloadShaders();
+    bool render(const Simulation& sim, const Camera& camera,int selectedSquad,
+                const VisualEffects& effects,AtmosphereSettings atmosphere,float visualTime,int textureResolution,
+                ExplosionEvent explosion,bool dynamicLights,bool precipitation,
+                const std::wstring& hudTop,const std::wstring& hudBottom);
+    std::size_t triangles() const;
+    bool ready()const;
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+}
+#endif

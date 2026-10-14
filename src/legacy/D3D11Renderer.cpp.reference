@@ -1,0 +1,392 @@
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include "gz/D3D11Renderer.hpp"
+#include "gz/Shaders.hpp"
+#include <d3d11.h>
+#include <d3dcompiler.h>
+#include <dxgi.h>
+#include <wrl/client.h>
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstring>
+#include <cwchar>
+#include <iterator>
+#include <filesystem>
+#include <fstream>
+#include <limits>
+#include <string>
+#include <utility>
+#include <vector>
+#pragma comment(lib,"d3d11.lib")
+#pragma comment(lib,"dxgi.lib")
+#pragma comment(lib,"d3dcompiler.lib")
+using Microsoft::WRL::ComPtr;
+namespace gz {
+namespace {
+struct alignas(16) FrameConstants {
+    float eyeTime[4],rightX[4],upY[4],forwardWind[4],settings[4];
+    float sunAmbient[4],sunTintDirect[4],fogColorNear[4],fogFarShadow[4];
+    float weatherSurface[4],localPosRadius[4][4],localColorEnergy[4][4],localDir[4][4];
+};
+static_assert(sizeof(FrameConstants)==352);
+struct P {float x,y,z;};
+P subtract(P a,P b){return {a.x-b.x,a.y-b.y,a.z-b.z};}
+P cross(P a,P b){return {a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x};}
+P normalized(P p){float len=std::sqrt(p.x*p.x+p.y*p.y+p.z*p.z);return len>.00001f?P{p.x/len,p.y/len,p.z/len}:P{0,1,0};}
+void put4(float a[4],P b,float d){a[0]=b.x;a[1]=b.y;a[2]=b.z;a[3]=d;}
+ComPtr<ID3DBlob> compile(const std::string& source,const char* name,
+                         const char* entry,const char* profile,ShaderQuality quality){
+    ComPtr<ID3DBlob> blob,errors;
+    const std::string q=std::to_string(int(quality));
+    const D3D_SHADER_MACRO defines[]={{"GZ_QUALITY",q.c_str()},{nullptr,nullptr}};
+    HRESULT hr=D3DCompile(source.data(),source.size(),name,defines,nullptr,entry,profile,
+                          D3DCOMPILE_ENABLE_STRICTNESS|D3DCOMPILE_OPTIMIZATION_LEVEL3,0,&blob,&errors);
+    if(FAILED(hr)){
+        if(errors)OutputDebugStringA((const char*)errors->GetBufferPointer());
+        return {};
+    }
+    return blob;
+}
+}
+struct D3D11Renderer::Impl {
+    HWND hwnd=nullptr;int width=0,height=0,textureRes=0;
+    ComPtr<ID3D11Device> device;
+    ComPtr<ID3D11DeviceContext> ctx;
+    ComPtr<IDXGISwapChain> swap;
+    ComPtr<ID3D11RenderTargetView> backRTV,msaaRTV;
+    ComPtr<ID3D11Texture2D> backTexture,msaaColor,depthSingle,depthMSAA;
+    ComPtr<ID3D11DepthStencilView> depthSingleView,depthMSAAView;
+    ComPtr<ID3D11VertexShader> sceneVS,overlayVS;
+    ComPtr<ID3D11PixelShader> scenePS,overlayPS;
+    ComPtr<ID3D11InputLayout> layout;
+    ComPtr<ID3D11Buffer> frameBuffer,vertexBuffer,indexBuffer;
+    ComPtr<ID3D11Texture2D> textureArray,overlayTexture;
+    ComPtr<ID3D11ShaderResourceView> arraySRV,overlaySRV;
+    ComPtr<ID3D11SamplerState> texSampler,overlaySampler;
+    ComPtr<ID3D11RasterizerState> raster;
+    ComPtr<ID3D11DepthStencilState> depthOff,depthReadOnly;
+    ComPtr<ID3D11BlendState> alphaBlend;
+    D3D11_VIEWPORT viewport{};
+    bool supports2x=false;
+    ShaderQuality shaderQuality=ShaderQuality::Balanced;
+    ShaderLibrary shaders;
+    std::uint32_t indexCount=0;
+    std::uint64_t cachedTick=std::numeric_limits<std::uint64_t>::max();
+    Camera cachedCamera{};ViewMode cachedMode=ViewMode::GlobalAI;
+    AtmosphereSettings cachedAtmosphere{};
+    SceneMesh mesh;SceneMeshBuilder meshBuilder;TerrainWorld terrain{9};
+    HDC hudDC=nullptr;HBITMAP hudBitmap=nullptr;HGDIOBJ previousHudBitmap=nullptr;void* hudBits=nullptr;
+    ~Impl(){destroyHud();}
+    void destroyHud(){if(hudDC){if(previousHudBitmap)SelectObject(hudDC,previousHudBitmap);DeleteDC(hudDC);hudDC=nullptr;}
+        if(hudBitmap){DeleteObject(hudBitmap);hudBitmap=nullptr;}hudBits=nullptr;}
+    bool makeHud(){
+        destroyHud();
+        BITMAPINFO bi{};bi.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);bi.bmiHeader.biWidth=width;
+        bi.bmiHeader.biHeight=-height;bi.bmiHeader.biPlanes=1;bi.bmiHeader.biBitCount=32;bi.bmiHeader.biCompression=BI_RGB;
+        hudBitmap=CreateDIBSection(nullptr,&bi,DIB_RGB_COLORS,&hudBits,nullptr,0);
+        if(!hudBitmap || !hudBits)return false;
+        hudDC=CreateCompatibleDC(nullptr);if(!hudDC)return false;
+        previousHudBitmap=SelectObject(hudDC,hudBitmap);
+        D3D11_TEXTURE2D_DESC td{};td.Width=UINT(width);td.Height=UINT(height);td.MipLevels=1;td.ArraySize=1;
+        td.Format=DXGI_FORMAT_R8G8B8A8_UNORM;td.SampleDesc.Count=1;td.Usage=D3D11_USAGE_DYNAMIC;
+        td.BindFlags=D3D11_BIND_SHADER_RESOURCE;td.CPUAccessFlags=D3D11_CPU_ACCESS_WRITE;
+        if(FAILED(device->CreateTexture2D(&td,nullptr,&overlayTexture)))return false;
+        return SUCCEEDED(device->CreateShaderResourceView(overlayTexture.Get(),nullptr,&overlaySRV));
+    }
+    void drawHudText(const std::wstring& top,const std::wstring& bottom,Weather weather,float time,bool precipitation){
+        if(!hudBits)return;
+        std::memset(hudBits,0,std::size_t(width)*height*4);
+        const int topH=112,bottomH=100;
+        HBRUSH brush=CreateSolidBrush(RGB(21,29,34));
+        RECT header{0,0,width,topH};RECT footer{0,height-bottomH,width,height};
+        FillRect(hudDC,&header,brush);FillRect(hudDC,&footer,brush);DeleteObject(brush);
+        HFONT font=CreateFontW(-19,0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
+        HGDIOBJ prev=SelectObject(hudDC,font);SetBkMode(hudDC,TRANSPARENT);SetTextColor(hudDC,RGB(231,229,205));
+        const wchar_t* title=L"GRAY ZONE: 1989  |  D3D11 GPU   |   F11: CPU / GPU";
+        TextOutW(hudDC,14,12,title,int(std::wcslen(title)));
+        TextOutW(hudDC,14,43,top.c_str(),int(top.size()));
+        const wchar_t* cmd=L"1 / 2 / 3: режими     WASD: рух     Q / E: камера     Esc: меню     F5 / F9: зберегти / завантажити";
+        TextOutW(hudDC,14,height-bottomH+13,cmd,int(std::wcslen(cmd)));
+        TextOutW(hudDC,14,height-bottomH+46,bottom.c_str(),int(bottom.size()));
+        SelectObject(hudDC,prev);DeleteObject(font);
+        if(precipitation && (weather==Weather::Rain||weather==Weather::Storm||weather==Weather::Snow)){
+            bool snow=weather==Weather::Snow;
+            const int count=snow?520:(weather==Weather::Storm?900:630);
+            HPEN pen=CreatePen(PS_SOLID,1,snow?RGB(226,235,244):RGB(149,179,199));
+            HGDIOBJ prior=SelectObject(hudDC,pen);
+            HBRUSH snowBrush=CreateSolidBrush(RGB(228,237,243));
+            HGDIOBJ prevBrush=SelectObject(hudDC,snowBrush);
+            for(int i=0;i<count;++i){
+                const auto pt=precipitationParticle(i,width,height,time,weather);
+                int x=int(pt.x),y=int(pt.y);
+                if(y<topH || y>=height-bottomH)continue;
+                if(snow)Ellipse(hudDC,x-1,y-1,x+2,y+2);
+                else {MoveToEx(hudDC,x,y,nullptr);LineTo(hudDC,x+int(pt.dx),y+int(pt.dy));}
+            }
+            SelectObject(hudDC,prevBrush);DeleteObject(snowBrush);
+            SelectObject(hudDC,prior);DeleteObject(pen);
+        }
+        GdiFlush();
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        if(FAILED(ctx->Map(overlayTexture.Get(),0,D3D11_MAP_WRITE_DISCARD,0,&mapped)))return;
+        const auto* src=(const std::uint32_t*)hudBits;
+        for(int y=0;y<height;++y){
+            auto* dst=(std::uint8_t*)mapped.pData+std::size_t(y)*mapped.RowPitch;
+            const bool panel=y<topH || y>=height-bottomH;
+            for(int x=0;x<width;++x){
+                std::uint32_t p=src[std::size_t(y)*width+x];
+                dst[x*4+0]=std::uint8_t((p>>16)&255);
+                dst[x*4+1]=std::uint8_t((p>>8)&255);
+                dst[x*4+2]=std::uint8_t(p&255);
+                const bool textPixel=(p&0xffffff)!=0x221d15;
+                dst[x*4+3]=panel?(textPixel?255:207):(p?192:0);
+            }
+        }
+        ctx->Unmap(overlayTexture.Get(),0);
+    }
+    bool makeRenderTargets(int w,int h){
+        if(w<=0||h<=0)return false;
+        ctx->OMSetRenderTargets(0,nullptr,nullptr);ctx->ClearState();ctx->Flush();
+        backRTV.Reset();msaaRTV.Reset();msaaColor.Reset();backTexture.Reset();depthMSAAView.Reset();depthMSAA.Reset();depthSingleView.Reset();depthSingle.Reset();
+        overlayTexture.Reset();overlaySRV.Reset();
+        if(width!=0&&height!=0){HRESULT hr=swap->ResizeBuffers(0,UINT(w),UINT(h),DXGI_FORMAT_UNKNOWN,0);if(FAILED(hr))return false;}
+        width=w;height=h;
+        if(FAILED(swap->GetBuffer(0,IID_PPV_ARGS(&backTexture))))return false;
+        if(FAILED(device->CreateRenderTargetView(backTexture.Get(),nullptr,&backRTV)))return false;
+        D3D11_TEXTURE2D_DESC depth{};depth.Width=UINT(w);depth.Height=UINT(h);depth.MipLevels=1;depth.ArraySize=1;
+        depth.Format=DXGI_FORMAT_D24_UNORM_S8_UINT;depth.SampleDesc.Count=1;depth.BindFlags=D3D11_BIND_DEPTH_STENCIL;
+        if(FAILED(device->CreateTexture2D(&depth,nullptr,&depthSingle)))return false;
+        if(FAILED(device->CreateDepthStencilView(depthSingle.Get(),nullptr,&depthSingleView)))return false;
+        UINT count=0;device->CheckMultisampleQualityLevels(DXGI_FORMAT_R8G8B8A8_UNORM,2,&count);
+        UINT dcount=0;device->CheckMultisampleQualityLevels(DXGI_FORMAT_D24_UNORM_S8_UINT,2,&dcount);
+        supports2x=count>0 && dcount>0;
+        if(supports2x){
+            auto td=depth;td.Format=DXGI_FORMAT_R8G8B8A8_UNORM;td.SampleDesc.Count=2;
+            td.SampleDesc.Quality=0;td.BindFlags=D3D11_BIND_RENDER_TARGET;
+            if(FAILED(device->CreateTexture2D(&td,nullptr,&msaaColor)) ||
+               FAILED(device->CreateRenderTargetView(msaaColor.Get(),nullptr,&msaaRTV)))supports2x=false;
+            td.Format=DXGI_FORMAT_D24_UNORM_S8_UINT;td.BindFlags=D3D11_BIND_DEPTH_STENCIL;
+            if(supports2x && (FAILED(device->CreateTexture2D(&td,nullptr,&depthMSAA)) ||
+               FAILED(device->CreateDepthStencilView(depthMSAA.Get(),nullptr,&depthMSAAView)))))supports2x=false;
+        }
+        viewport={0.f,0.f,float(w),float(h),0.f,1.f};
+        return makeHud();
+    }
+    bool makeShaders(){
+        ShaderLibrary candidate;
+        if(!candidate.load("assets/shaders")){
+            OutputDebugStringA(candidate.error().c_str());return false;
+        }
+        auto vs=compile(candidate.scene(),"scene.hlsl","VSMain","vs_4_0",shaderQuality);
+        auto ps=compile(candidate.scene(),"scene.hlsl","PSMain","ps_4_0",shaderQuality);
+        auto ovs=compile(candidate.overlay(),"overlay.hlsl","OverlayVS","vs_4_0",shaderQuality);
+        auto ops=compile(candidate.overlay(),"overlay.hlsl","OverlayPS","ps_4_0",shaderQuality);
+        if(!vs||!ps||!ovs||!ops)return false;
+        ComPtr<ID3D11VertexShader> newSceneVS,newOverlayVS;
+        ComPtr<ID3D11PixelShader> newScenePS,newOverlayPS;
+        if(FAILED(device->CreateVertexShader(vs->GetBufferPointer(),vs->GetBufferSize(),nullptr,&newSceneVS)))return false;
+        if(FAILED(device->CreatePixelShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,&newScenePS)))return false;
+        if(FAILED(device->CreateVertexShader(ovs->GetBufferPointer(),ovs->GetBufferSize(),nullptr,&newOverlayVS)))return false;
+        if(FAILED(device->CreatePixelShader(ops->GetBufferPointer(),ops->GetBufferSize(),nullptr,&newOverlayPS)))return false;
+        const D3D11_INPUT_ELEMENT_DESC attrs[]={
+            {"POSITION",0,DXGI_FORMAT_R32G32B32_FLOAT,0,0,D3D11_INPUT_PER_VERTEX_DATA,0},
+            {"NORMAL",0,DXGI_FORMAT_R32G32B32_FLOAT,0,12,D3D11_INPUT_PER_VERTEX_DATA,0},
+            {"TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,24,D3D11_INPUT_PER_VERTEX_DATA,0},
+            {"TEXCOORD",1,DXGI_FORMAT_R32_FLOAT,0,32,D3D11_INPUT_PER_VERTEX_DATA,0},
+            {"TEXCOORD",2,DXGI_FORMAT_R32_FLOAT,0,36,D3D11_INPUT_PER_VERTEX_DATA,0},
+            {"TEXCOORD",3,DXGI_FORMAT_R32G32_FLOAT,0,40,D3D11_INPUT_PER_VERTEX_DATA,0},
+        };
+        ComPtr<ID3D11InputLayout> newLayout;
+        if(FAILED(device->CreateInputLayout(attrs,UINT(std::size(attrs)),vs->GetBufferPointer(),vs->GetBufferSize(),&newLayout)))return false;
+        // Commit only after every compiled stage and input layout is valid.
+        sceneVS=newSceneVS;scenePS=newScenePS;overlayVS=newOverlayVS;overlayPS=newOverlayPS;
+        layout=newLayout;shaders=std::move(candidate);
+        if(frameBuffer)return true; // runtime hot reload does not recreate GPU state
+        D3D11_BUFFER_DESC cb{};cb.ByteWidth=UINT(sizeof(FrameConstants));cb.Usage=D3D11_USAGE_DYNAMIC;
+        cb.BindFlags=D3D11_BIND_CONSTANT_BUFFER;cb.CPUAccessFlags=D3D11_CPU_ACCESS_WRITE;
+        if(FAILED(device->CreateBuffer(&cb,nullptr,&frameBuffer)))return false;
+        D3D11_SAMPLER_DESC sd{};sd.Filter=D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+        sd.AddressU=sd.AddressV=sd.AddressW=D3D11_TEXTURE_ADDRESS_WRAP;sd.MaxLOD=D3D11_FLOAT32_MAX;
+        if(FAILED(device->CreateSamplerState(&sd,&texSampler)))return false;
+        sd.AddressU=sd.AddressV=D3D11_TEXTURE_ADDRESS_CLAMP;
+        if(FAILED(device->CreateSamplerState(&sd,&overlaySampler)))return false;
+        D3D11_RASTERIZER_DESC rs{};rs.FillMode=D3D11_FILL_SOLID;rs.CullMode=D3D11_CULL_NONE;rs.DepthClipEnable=TRUE;
+        if(FAILED(device->CreateRasterizerState(&rs,&raster)))return false;
+        D3D11_DEPTH_STENCIL_DESC disabled{};disabled.DepthEnable=FALSE;disabled.StencilEnable=FALSE;
+        if(FAILED(device->CreateDepthStencilState(&disabled,&depthOff)))return false;
+        D3D11_DEPTH_STENCIL_DESC readOnly{};
+        readOnly.DepthEnable=TRUE;readOnly.DepthWriteMask=D3D11_DEPTH_WRITE_MASK_ZERO;
+        readOnly.DepthFunc=D3D11_COMPARISON_LESS_EQUAL;
+        if(FAILED(device->CreateDepthStencilState(&readOnly,&depthReadOnly)))return false;
+        D3D11_BLEND_DESC blend{};blend.RenderTarget[0].BlendEnable=TRUE;
+        auto& b=blend.RenderTarget[0];b.SrcBlend=D3D11_BLEND_SRC_ALPHA;b.DestBlend=D3D11_BLEND_INV_SRC_ALPHA;
+        b.BlendOp=D3D11_BLEND_OP_ADD;b.SrcBlendAlpha=D3D11_BLEND_ONE;b.DestBlendAlpha=D3D11_BLEND_INV_SRC_ALPHA;
+        b.BlendOpAlpha=D3D11_BLEND_OP_ADD;b.RenderTargetWriteMask=D3D11_COLOR_WRITE_ENABLE_ALL;
+        if(FAILED(device->CreateBlendState(&blend,&alphaBlend)))return false;
+        return true;
+    }
+    bool loadTextures(int resolution){
+        // Atlas is a 17-slice texture array; 0 = neutral white, 1..16 = GZT material ID.
+        if(resolution!=128 && resolution!=256 && resolution!=512)resolution=256;
+        if(textureRes==resolution && arraySRV)return true;
+        ID3D11ShaderResourceView* empty[1]={nullptr};ctx->PSSetShaderResources(0,1,empty);
+        arraySRV.Reset();textureArray.Reset();textureRes=0;
+        constexpr int count=int(TextureMaterial::Count);
+        std::vector<std::vector<std::uint8_t>> slices(static_cast<std::size_t>(count));
+        for(int i=0;i<count;++i){
+            auto& pixels=slices[std::size_t(i)];pixels.resize(std::size_t(resolution)*resolution*4,255);
+            if(i==0)continue;
+            auto path=std::filesystem::path("assets/textures/runtime")/
+                (std::string(TextureLibrary::name(TextureMaterial(i)))+"_"+std::to_string(resolution)+".gzt");
+            std::ifstream in(path,std::ios::binary);if(!in)continue;
+            std::uint8_t header[8]{};in.read(reinterpret_cast<char*>(header),8);
+            if(!in||std::memcmp(header,"GZT1",4)!=0 || (int(header[4])+(int(header[5])<<8))!=resolution ||
+                (int(header[6])+(int(header[7])<<8))!=resolution)continue;
+            std::vector<std::uint8_t> rgb(std::size_t(resolution)*resolution*3);
+            in.read((char*)rgb.data(),std::streamsize(rgb.size()));if(!in)continue;
+            for(std::size_t p=0;p<rgb.size()/3;++p){pixels[p*4]=rgb[p*3];pixels[p*4+1]=rgb[p*3+1];pixels[p*4+2]=rgb[p*3+2];}
+        }
+        std::array<D3D11_SUBRESOURCE_DATA,count> sub{};
+        for(int i=0;i<count;++i){sub[std::size_t(i)].pSysMem=slices[std::size_t(i)].data();sub[std::size_t(i)].SysMemPitch=UINT(resolution*4);}
+        D3D11_TEXTURE2D_DESC td{};td.Width=UINT(resolution);td.Height=UINT(resolution);td.MipLevels=1;
+        td.ArraySize=count;td.Format=DXGI_FORMAT_R8G8B8A8_UNORM;td.SampleDesc.Count=1;td.Usage=D3D11_USAGE_IMMUTABLE;td.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+        if(FAILED(device->CreateTexture2D(&td,sub.data(),&textureArray)))return false;
+        if(FAILED(device->CreateShaderResourceView(textureArray.Get(),nullptr,&arraySRV)))return false;
+        textureRes=resolution;return true;
+    }
+    bool buildScene(const Simulation& sim,const Camera& cam,int selected,AtmosphereSettings atmosphere){
+        const auto tick=sim.stats().tick;
+        const float dx=cachedCamera.focusX-cam.focusX,dz=cachedCamera.focusZ-cam.focusZ;
+        bool changed=std::abs(dx)>16 ||std::abs(dz)>16 ||std::abs(cachedCamera.distance-cam.distance)>5 ||
+                     cachedMode!=sim.mode() ||cachedTick!=tick ||!vertexBuffer ||
+                     cachedAtmosphere.shadows!=atmosphere.shadows ||cachedAtmosphere.time!=atmosphere.time;
+        if(!changed)return true;
+        meshBuilder.build(mesh,terrain,sim,cam,selected,atmosphere);
+        if(mesh.vertices.empty()||mesh.indices.empty())return false;
+        if(mesh.vertices.size()>std::numeric_limits<UINT>::max()/sizeof(SceneVertex))return false;
+        if(mesh.indices.size()>std::numeric_limits<UINT>::max()/sizeof(std::uint32_t))return false;
+        // These are immutable for a given mesh build, and GPU-owned afterward.
+        D3D11_BUFFER_DESC vb{};vb.ByteWidth=UINT(mesh.vertices.size()*sizeof(SceneVertex));vb.BindFlags=D3D11_BIND_VERTEX_BUFFER;
+        vb.Usage=D3D11_USAGE_IMMUTABLE;D3D11_SUBRESOURCE_DATA vsd{};vsd.pSysMem=mesh.vertices.data();
+        ComPtr<ID3D11Buffer> newVB;if(FAILED(device->CreateBuffer(&vb,&vsd,&newVB)))return false;
+        D3D11_BUFFER_DESC ib{};ib.ByteWidth=UINT(mesh.indices.size()*sizeof(std::uint32_t));ib.BindFlags=D3D11_BIND_INDEX_BUFFER;
+        ib.Usage=D3D11_USAGE_IMMUTABLE;D3D11_SUBRESOURCE_DATA isd{};isd.pSysMem=mesh.indices.data();
+        ComPtr<ID3D11Buffer> newIB;if(FAILED(device->CreateBuffer(&ib,&isd,&newIB)))return false;
+        vertexBuffer=newVB;indexBuffer=newIB;indexCount=UINT(mesh.indices.size());
+        cachedCamera=cam;cachedMode=sim.mode();cachedTick=tick;cachedAtmosphere=atmosphere;
+        return true;
+    }
+    bool draw(const Simulation& sim,const Camera& cam,int selected,const VisualEffects& fx,AtmosphereSettings atmosphere,float time,int res,
+              ExplosionEvent explosion,bool dynamicLights,bool precipitation,
+              const std::wstring& top,const std::wstring& bottom){
+        if(!device||!swap||width<=0||height<=0)return false;
+        if(!loadTextures(res)||!buildScene(sim,cam,selected,atmosphere))return false;
+        const auto sky=atmosphereProfile(atmosphere);
+        const bool msaa=supports2x && fx.antialiasing;
+        ID3D11RenderTargetView* target=msaa?msaaRTV.Get():backRTV.Get();
+        ID3D11DepthStencilView* depth=msaa?depthMSAAView.Get():depthSingleView.Get();
+        ctx->OMSetRenderTargets(1,&target,depth);
+        const float skyColor[4]={sky.skyR,sky.skyG,sky.skyB,1.f};ctx->ClearRenderTargetView(target,skyColor);ctx->ClearDepthStencilView(depth,D3D11_CLEAR_DEPTH,1.f,0);
+        ctx->RSSetViewports(1,&viewport);ctx->RSSetState(raster.Get());ctx->OMSetBlendState(nullptr,nullptr,0xffffffff);
+        ctx->OMSetDepthStencilState(nullptr,0);
+        P focus{cam.focusX,terrain.heightAt(cam.focusX,cam.focusZ)+1.f,cam.focusZ};
+        float dist=std::clamp(cam.distance,10.f,4000.f),pitch=std::clamp(cam.pitch,.22f,1.4f);
+        P eye{focus.x+std::sin(cam.yaw)*std::cos(pitch)*dist,focus.y+std::sin(pitch)*dist,focus.z-std::cos(cam.yaw)*std::cos(pitch)*dist};
+        P forward=normalized(subtract(focus,eye));P right=normalized(cross(forward,{0,1,0}));P up=normalized(cross(right,forward));
+        FrameConstants c{};put4(c.eyeTime,eye,time);put4(c.rightX,right,1.88f*float(height)/float(width));
+        put4(c.upY,up,1.88f);put4(c.forwardWind,forward,0.f);
+        c.settings[0]=fx.wind?1.f:0.f;c.settings[1]=fx.waterReflections?1.f:0.f;
+        c.settings[3]=sky.windMultiplier;
+        c.sunAmbient[0]=sky.sunX;c.sunAmbient[1]=sky.sunY;c.sunAmbient[2]=sky.sunZ;c.sunAmbient[3]=sky.ambient;
+        c.sunTintDirect[0]=sky.sunR;c.sunTintDirect[1]=sky.sunG;c.sunTintDirect[2]=sky.sunB;c.sunTintDirect[3]=sky.direct;
+        c.fogColorNear[0]=sky.fogR;c.fogColorNear[1]=sky.fogG;c.fogColorNear[2]=sky.fogB;c.fogColorNear[3]=sky.fogNear;
+        c.fogFarShadow[0]=sky.fogFar;c.fogFarShadow[1]=sky.shadowOpacity;
+        c.weatherSurface[0]=sky.wetness;c.weatherSurface[1]=sky.snowCover;
+        c.weatherSurface[2]=dynamicLights?1.f:0.f;
+        const auto lights=localLights(time,explosion,dynamicLights,atmosphere);
+        for(int i=0;i<4;++i){
+            const auto& l=lights[std::size_t(i)];
+            c.localPosRadius[i][0]=l.x;
+            c.localPosRadius[i][1]=l.y+terrain.heightAt(l.x,l.z);
+            c.localPosRadius[i][2]=l.z;
+            c.localPosRadius[i][3]=l.radius;
+            c.localColorEnergy[i][0]=l.r;c.localColorEnergy[i][1]=l.g;
+            c.localColorEnergy[i][2]=l.b;c.localColorEnergy[i][3]=l.energy;
+            c.localDir[i][0]=l.forwardX;c.localDir[i][1]=l.forwardZ;
+        }
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        if(FAILED(ctx->Map(frameBuffer.Get(),0,D3D11_MAP_WRITE_DISCARD,0,&mapped)))return false;
+        std::memcpy(mapped.pData,&c,sizeof(c));ctx->Unmap(frameBuffer.Get(),0);
+        const UINT stride=sizeof(SceneVertex),offset=0;
+        ID3D11Buffer* vb=vertexBuffer.Get();ctx->IASetVertexBuffers(0,1,&vb,&stride,&offset);
+        ctx->IASetIndexBuffer(indexBuffer.Get(),DXGI_FORMAT_R32_UINT,0);
+        ctx->IASetInputLayout(layout.Get());ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        ID3D11Buffer* cb=frameBuffer.Get();ctx->VSSetConstantBuffers(0,1,&cb);ctx->PSSetConstantBuffers(0,1,&cb);
+        ctx->VSSetShader(sceneVS.Get(),nullptr,0);ctx->PSSetShader(scenePS.Get(),nullptr,0);
+        ID3D11ShaderResourceView* srv=arraySRV.Get();ctx->PSSetShaderResources(0,1,&srv);
+        ID3D11SamplerState* sampler=texSampler.Get();ctx->PSSetSamplers(0,1,&sampler);
+        ctx->DrawIndexed(mesh.shadowFirstIndex,0,0);
+        if(mesh.shadowIndexCount && sky.shadowOpacity>.01f){
+            const float blendFactor[]={0.f,0.f,0.f,0.f};
+            ctx->OMSetBlendState(alphaBlend.Get(),blendFactor,0xffffffff);
+            ctx->OMSetDepthStencilState(depthReadOnly.Get(),0);
+            ctx->DrawIndexed(mesh.shadowIndexCount,mesh.shadowFirstIndex,0);
+            ctx->OMSetBlendState(nullptr,nullptr,0xffffffff);
+            ctx->OMSetDepthStencilState(nullptr,0);
+        }
+        if(msaa){
+            ctx->OMSetRenderTargets(0,nullptr,nullptr);
+            ctx->ResolveSubresource(backTexture.Get(),0,msaaColor.Get(),0,DXGI_FORMAT_R8G8B8A8_UNORM);
+        }
+        drawHudText(top,bottom,atmosphere.weather,time,precipitation);
+        target=backRTV.Get();ctx->OMSetRenderTargets(1,&target,nullptr);
+        ctx->OMSetDepthStencilState(depthOff.Get(),0);
+        const float bf[]={0.f,0.f,0.f,0.f};ctx->OMSetBlendState(alphaBlend.Get(),bf,0xffffffff);
+        ctx->VSSetShader(overlayVS.Get(),nullptr,0);ctx->PSSetShader(overlayPS.Get(),nullptr,0);
+        ID3D11ShaderResourceView* overlay=overlaySRV.Get();ctx->PSSetShaderResources(1,1,&overlay);
+        ID3D11SamplerState* os=overlaySampler.Get();ctx->PSSetSamplers(1,1,&os);
+        ctx->IASetInputLayout(nullptr);ctx->Draw(3,0);
+        ID3D11ShaderResourceView* nulls[2]={};ctx->PSSetShaderResources(0,2,nulls);
+        HRESULT hr=swap->Present(1,0);
+        return SUCCEEDED(hr);
+    }
+};
+D3D11Renderer::D3D11Renderer():impl_(std::make_unique<Impl>()){}
+D3D11Renderer::~D3D11Renderer()=default;
+bool D3D11Renderer::ready()const{return impl_->device && impl_->sceneVS && impl_->scenePS && impl_->frameBuffer;}
+std::size_t D3D11Renderer::triangles()const{return impl_->indexCount/3;}
+bool D3D11Renderer::initialize(HWND hwnd){
+    auto& p=*impl_;p.hwnd=hwnd;
+    RECT rect{};GetClientRect(hwnd,&rect);
+    DXGI_SWAP_CHAIN_DESC sc{};sc.BufferCount=2;sc.BufferDesc.Width=UINT(rect.right);sc.BufferDesc.Height=UINT(rect.bottom);
+    sc.BufferDesc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;sc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;sc.OutputWindow=hwnd;
+    sc.SampleDesc.Count=1;sc.Windowed=TRUE;sc.SwapEffect=DXGI_SWAP_EFFECT_DISCARD;
+    const D3D_FEATURE_LEVEL levels[]={D3D_FEATURE_LEVEL_11_0,D3D_FEATURE_LEVEL_10_1,D3D_FEATURE_LEVEL_10_0};
+    D3D_FEATURE_LEVEL actual{};
+    HRESULT hr=D3D11CreateDeviceAndSwapChain(nullptr,D3D_DRIVER_TYPE_HARDWARE,nullptr,D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                levels,UINT(std::size(levels)),D3D11_SDK_VERSION,&sc,&p.swap,&p.device,&actual,&p.ctx);
+    if(FAILED(hr))return false;
+    if(!p.makeShaders())return false;
+    p.terrain.setTileDirectory("assets/terrain");
+    return p.makeRenderTargets(rect.right,rect.bottom);
+}
+bool D3D11Renderer::setShaderQuality(ShaderQuality quality){
+    if(!ready()) {impl_->shaderQuality=quality;return true;}
+    if(impl_->shaderQuality==quality)return true;
+    const auto previous=impl_->shaderQuality;
+    impl_->shaderQuality=quality;
+    if(impl_->makeShaders())return true;
+    impl_->shaderQuality=previous;
+    return false; // keep old working shader stages
+}
+bool D3D11Renderer::reloadShaders(){return ready() && impl_->makeShaders();}
+bool D3D11Renderer::resize(int w,int h){if(!ready())return false;if(w==impl_->width&&h==impl_->height)return true;return impl_->makeRenderTargets(w,h);}
+bool D3D11Renderer::render(const Simulation& s,const Camera& c,int selected,const VisualEffects& fx,AtmosphereSettings atmosphere,float time,int resolution,
+                            ExplosionEvent explosion,bool dynamicLights,bool precipitation,
+                            const std::wstring& top,const std::wstring& bottom){
+    return impl_->draw(s,c,selected,fx,atmosphere,time,resolution,explosion,dynamicLights,precipitation,top,bottom);
+}
+}
+#endif

@@ -1,0 +1,35 @@
+name: GRAY ZONE Windows CPU compatibility CI (Vulkan SDK not bundled)
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  windows-x64-compatibility:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      # Vulkan SDK is NOT preinstalled on all hosted Windows runners. This job
+      # tests Windows app/CPU fallback. To build Vulkan, use build_windows.bat
+      # on a Vulkan SDK machine with GZ_REQUIRE_VULKAN=ON.
+      - name: Configure Visual Studio x64 (CPU fallback only)
+        run: cmake -S . -B build-win -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DGZ_ENABLE_VULKAN=OFF -DGZ_REQUIRE_VULKAN=OFF
+      - name: Build Windows compatibility executable
+        run: cmake --build build-win --config Release --parallel 4
+      - name: Run C++ regression tests
+        run: ctest --test-dir build-win -C Release --output-on-failure
+      - name: Package and identify CPU fallback build
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/assets/textures | Out-Null
+          Copy-Item build-win/Release/GRAY_ZONE_1989.exe dist/
+          foreach ($d in @('europe','ui','terrain','shaders','politics','scenarios','lore','audio')) {
+            Copy-Item "assets/$d" "dist/assets/$d" -Recurse
+          }
+          Copy-Item assets/textures/runtime dist/assets/textures/runtime -Recurse
+          'This artifact is a Windows CPU-compatibility test build. No Vulkan SDK/GPU backend was verified in CI.' | Set-Content -Encoding UTF8 dist/GPU_STATUS.txt
+          '@echo off' | Set-Content -Encoding ASCII dist/PLAY.bat
+          'cd /d "%~dp0"' | Add-Content -Encoding ASCII dist/PLAY.bat
+          'start "" "GRAY_ZONE_1989.exe"' | Add-Content -Encoding ASCII dist/PLAY.bat
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GRAY_ZONE_1989_v022_Windows_CPU_Compatibility_NotVulkan
+          path: dist/
