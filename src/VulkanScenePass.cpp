@@ -246,8 +246,9 @@ void VulkanScenePass::destroySwapchain()noexcept{
         for(auto view:colorViews_)vkDestroyImageView(device_,view,nullptr);
     }
     destroyImage(macro_);destroyBuffer(macroStaging_);macroCopies_.clear();macroPending_=false;macroRevision_=0;macroResolution_=0;
+    if(glyphSampler_)vkDestroySampler(device_,glyphSampler_,nullptr);glyphSampler_=VK_NULL_HANDLE;
     destroyImage(glyphs_);destroyBuffer(glyphStaging_);destroyBuffer(uiVertices_);destroyBuffer(uiIndices_);uiIndexCount_=0;uiPipeline_=VK_NULL_HANDLE;
-    destroyImage(materials_);destroyImage(shadow_);destroyImage(msaaColor_);
+    destroyImage(normals_);destroyBuffer(normalStaging_);normalCopies_.clear();destroyImage(materials_);destroyImage(shadow_);destroyImage(msaaColor_);
     destroyBuffer(uniforms_);destroyBuffer(textureStaging_);textureCopies_.clear();texturesPending_=false;
     skyPipeline_=shadowPipeline_=VK_NULL_HANDLE;shadowPass_=VK_NULL_HANDLE;shadowFramebuffer_=VK_NULL_HANDLE;
     descriptorLayout_=VK_NULL_HANDLE;descriptorPool_=VK_NULL_HANDLE;descriptor_=VK_NULL_HANDLE;
@@ -305,6 +306,7 @@ bool VulkanScenePass::upload(const RenderSubmission& submission,const GpuFrameCo
         error="Native GPU mesh format invalid";return false;
     }
     // The preceding submit fence has completed before upload() is called.
+    if(!texturesPending_ && normalStaging_.buffer)destroyBuffer(normalStaging_);
     if(!texturesPending_ && textureStaging_.buffer)destroyBuffer(textureStaging_);
     if(!texturesPending_ && glyphStaging_.buffer)destroyBuffer(glyphStaging_);
     if(!macroPending_&&macroStaging_.buffer)destroyBuffer(macroStaging_);

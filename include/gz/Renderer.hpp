@@ -16,6 +16,8 @@ struct Vec3 {float x=0,y=0,z=0;};
 struct Camera {
     float focusX=3000,focusZ=1250;
     float yaw=0.34f,pitch=0.82f,distance=1950;
+    bool firstPerson=false;
+    float eyeHeight=1.65f,fov=56.f,weaponKick=0.f;
 };
 struct VisualEffects {
     bool antialiasing = true;      // Low-cost, edge-adaptive post filter (one 32-bit buffer).

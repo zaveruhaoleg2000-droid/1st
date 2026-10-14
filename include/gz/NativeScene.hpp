@@ -15,7 +15,8 @@ inline GeometryView makeGeometryView(const SceneMesh& mesh) {
 }
 inline GpuSceneCamera makeGpuSceneCamera(const Camera& c,float centerHeight,AtmosphereSettings atmosphere,VisualEffects effects={}){
     GpuSceneCamera out{};
-    out.focusX=c.focusX;out.focusY=centerHeight+1.f;out.focusZ=c.focusZ;
+    out.firstPerson=c.firstPerson;out.eyeHeight=c.eyeHeight;out.fov=c.fov;
+    out.focusX=c.focusX;out.focusY=centerHeight+(c.firstPerson?0.f:1.f);out.focusZ=c.focusZ;
     out.distance=c.distance;out.pitch=c.pitch;out.yaw=c.yaw;
     const auto light=atmosphereProfile(atmosphere);
     out.sunX=light.sunX;out.sunY=light.sunY;out.sunZ=light.sunZ;

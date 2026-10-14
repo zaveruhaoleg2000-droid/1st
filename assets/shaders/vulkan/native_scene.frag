@@ -15,6 +15,7 @@ layout(set=0,binding=0,std140) uniform Frame {
 layout(set=0,binding=1) uniform sampler2DArray materials;
 layout(set=0,binding=2) uniform sampler2D shadowMap;
 layout(set=0,binding=4) uniform sampler2D terrainMacro;
+layout(set=0,binding=5) uniform sampler2DArray normalMaps;
 layout(location=0) in vec3 worldNormal;
 layout(location=1) in vec3 worldPosition;
 layout(location=2) flat in int material;
@@ -60,10 +61,10 @@ float visibility(vec3 N,vec3 L){
 float distribution(float NoH,float rough){float a=rough*rough,a2=a*a;float d=NoH*NoH*(a2-1.)+1.;return a2/max(3.14159*d*d,.00001);}
 float geometry(float NoV,float rough){float k=(rough+1.)*(rough+1.)*.125;return NoV/(NoV*(1.-k)+k);}
 void main(){
+    if(material==32){color=vec4(displayColor(vec3(6.,2.1,.22)),1.);return;}
     vec3 V=normalize(pc.eye.xyz-worldPosition),N=normalize(worldNormal),L=normalize(pc.sun.xyz);
     if(dot(N,V)<0.)N=-N;
-    int layer=clamp(material,0,16);
-    if(material==17)layer=2;else if(material==18)layer=4;else if(material>=19)layer=10;
+    int layer=clamp(material,0,31);
     vec3 albedo=texture(materials,vec3(uv,layer)).rgb;
     float macro=.88+.24*fbm(worldPosition.xz*.019);
     albedo*=macro;
@@ -81,23 +82,17 @@ void main(){
         float detail=clamp(dot(albedo,vec3(.2126,.7152,.0722))/.14,.55,1.5);
         albedo=mix(albedo,macroColor*mix(1.,detail,.35),weight);
     }
-    if(material==17)albedo*=vec3(.50,.69,.40);
-    if(material==18)albedo*=vec3(.72,.56,.43);
-    if(material==19)albedo=vec3(.43,.23,.13);
-    if(material==20)albedo*=vec3(.17,.26,.13);
-    if(material==21)albedo=vec3(.012,.016,.019);
-    if(material==22)albedo=vec3(.035,.08,.095);
-    if(material==23)albedo*=vec3(.38,.14,.075);
-    float rough=material==9?.78:(material==13?.9:(material==22?.13:.72));
-    float height=dot(albedo,vec3(.2126,.7152,.0722));
-    // Filtered texture derivatives supply subtle relief without extra maps.
-    vec3 bump=dFdx(worldPosition)*dFdx(height)+dFdy(worldPosition)*dFdy(height);
-    N=normalize(N-bump*.18);
+    float rough=material==24?.29:(material==20?.42:(material==9?.78:(material==13?.9:(material==22?.13:.72))));
+    vec3 mapNormal=texture(normalMaps,vec3(uv,layer)).xyz*2.-1.;
+    vec3 Q1=dFdx(worldPosition),Q2=dFdy(worldPosition);vec2 st1=dFdx(uv),st2=dFdy(uv);
+    vec3 T=Q1*st2.y-Q2*st1.y;vec3 B=-Q1*st2.x+Q2*st1.x;
+    if(dot(T,T)>.000001&&dot(B,B)>.000001){T=normalize(T);B=normalize(B);N=normalize(T*mapNormal.x+B*mapNormal.y+N*max(.1,mapNormal.z));}
     float snow=pc.effects.x*smoothstep(.15,.8,N.y);
     if(material!=15)albedo=mix(albedo,vec3(.81,.85,.88),snow*.92);
     float wet=pc.sky.w*(material==15?1.:smoothstep(.05,.7,N.y));
     albedo*=1.-wet*.32;rough=mix(rough,.22,wet);
     vec3 F0=vec3(.035);
+    if(material==24)F0=vec3(.5);
     if(material==15){
         float phase1=worldPosition.x*.14+pc.time.x*1.4;
         float phase2=worldPosition.z*.19-pc.time.x*.9;

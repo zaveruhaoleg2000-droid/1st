@@ -40,7 +40,7 @@ void Simulation::newOperation(std::uint32_t playerSoldiers,std::uint32_t opponen
     tick_=shots_=casualties_=0;
     mode_=ViewMode::Command;
     commanderHasTarget_=false;
-    controlledSquad_=0;
+    controlledSquad_=0;controlledSoldierIndex_=0;directInput_={};lastShot_={};
     for (int side=0;side<2;++side) {
         std::uint32_t remaining = side==0?playerSoldiers:opponents;
         std::uint32_t indexOnSide=0;
@@ -59,6 +59,8 @@ void Simulation::newOperation(std::uint32_t playerSoldiers,std::uint32_t opponen
                 s.id=static_cast<std::uint32_t>(soldiers_.size());
                 s.squad=sq.id;
                 s.commander=(member==0);
+                s.weapon=member==6?Weapon::MachineGun:member==7?Weapon::Sniper:member==5?Weapon::SMG:Weapon::Rifle;
+                s.primaryWeapon=s.weapon;s.magazine=weaponSpec(s.weapon).capacity;
                 s.x=baseX+double(member%4)*2.0;
                 s.z=baseZ+double(member/4)*2.0;
                 soldiers_.push_back(s);
@@ -77,6 +79,7 @@ void Simulation::setMode(ViewMode mode) {
         // Existing orders MUST survive handoff: the AI owns future decisions,
         // not the past battle state or the orders already given by the player.
     }
+    if(mode_!=mode){directInput_={};commanderHasTarget_=false;}
     mode_=mode;
     if (mode==ViewMode::GlobalAI) commanderHasTarget_=false;
 }
@@ -98,18 +101,81 @@ bool Simulation::setHoldPosition(std::uint32_t id,bool hold) {
 }
 bool Simulation::selectControlledSquad(std::uint32_t id) {
     if(id>=squads_.size() || squads_[id].side!=Side::Player)return false;
-    controlledSquad_=id;
+    controlledSquad_=id;controlledSoldierIndex_=squads_[id].memberStart;
     commanderHasTarget_=false;
     return true;
 }
 std::uint32_t Simulation::controlledSoldier() const {
-    return squads_.empty() ? 0u : squads_[controlledSquad_].memberStart;
+    if(squads_.empty())return 0;
+    const auto& sq=squads_[controlledSquad_];
+    if(controlledSoldierIndex_<soldiers_.size()&&soldiers_[controlledSoldierIndex_].squad==controlledSquad_&&soldiers_[controlledSoldierIndex_].health>0)return controlledSoldierIndex_;
+    for(std::uint32_t i=sq.memberStart;i<sq.memberStart+sq.memberCount;++i)if(soldiers_[i].health>0)return i;
+    return sq.memberStart;
 }
 bool Simulation::moveCommander(double x,double z) {
     if (mode_!=ViewMode::Direct || !finiteCoordinate(x) || !finiteCoordinate(z)) return false;
     commanderTargetX_=x;
     commanderTargetZ_=z;
     commanderHasTarget_=true;
+    return true;
+}
+bool Simulation::selectControlledSoldier(std::uint32_t id){
+    if(id>=soldiers_.size()||soldiers_[id].health<=0||squads_[soldiers_[id].squad].side!=Side::Player)return false;
+    controlledSquad_=soldiers_[id].squad;controlledSoldierIndex_=id;commanderHasTarget_=false;return true;
+}
+bool Simulation::cycleControlledSoldier(){
+    if(soldiers_.empty())return false;
+    const auto current=controlledSoldier();
+    for(std::size_t n=1;n<=soldiers_.size();++n)if(selectControlledSoldier(std::uint32_t((current+n)%soldiers_.size())))return true;
+    return false;
+}
+void Simulation::setDirectInput(DirectInput input){
+    auto finite=[](float v){return std::isfinite(v)?v:0.f;};
+    input.forward=std::clamp(finite(input.forward),-1.f,1.f);input.right=std::clamp(finite(input.right),-1.f,1.f);
+    input.yaw=std::remainder(finite(input.yaw),6.2831853f);input.pitch=std::clamp(finite(input.pitch),-1.45f,1.45f);
+    directInput_=input;commanderHasTarget_=false;
+}
+int Simulation::applyDamage(Soldier& target,int damage,bool headshot){
+    if(target.health<=0||damage<=0)return 0;
+    if(headshot)damage*=2;
+    const int absorbed=headshot?0:std::min(int(target.armor),int(std::ceil(damage*.6)));
+    target.armor=std::int16_t(std::max(0,int(target.armor)-absorbed));
+    const int before=target.health;target.health=std::int16_t(std::max(0,int(target.health)-damage+absorbed));
+    return before-target.health;
+}
+bool Simulation::reloadControlled(){
+    if(soldiers_.empty()||mode_!=ViewMode::Direct)return false;
+    auto& s=soldiers_[controlledSoldier()];const auto& w=weaponSpec(s.weapon);
+    if(s.health<=0||s.reloadTicks||s.magazine>=w.capacity||s.magazine>=s.ammo)return false;
+    s.reloadTicks=w.reloadTicks;return true;
+}
+bool Simulation::toggleSidearm(){
+    if(mode_!=ViewMode::Direct||soldiers_.empty())return false;
+    auto& s=soldiers_[controlledSoldier()];if(s.health<=0)return false;
+    if(s.weapon!=Weapon::Pistol){s.primaryWeapon=s.weapon;s.weapon=Weapon::Pistol;}else s.weapon=s.primaryWeapon;
+    std::swap(s.ammo,s.secondaryAmmo);std::swap(s.magazine,s.secondaryMagazine);s.reloadTicks=0;s.cooldown=4;return true;
+}
+bool Simulation::fireControlled(){
+    if(soldiers_.empty()||mode_!=ViewMode::Direct)return false;
+    auto& shooter=soldiers_[controlledSoldier()];const auto& w=weaponSpec(shooter.weapon);
+    if(shooter.health<=0||shooter.cooldown||shooter.reloadTicks||!shooter.ammo||!shooter.magazine)return false;
+    --shooter.ammo;--shooter.magazine;shooter.cooldown=w.cooldown;++shots_;
+    const double sy=heightSampler_?heightSampler_(shooter.x,shooter.z):0;
+    const double eye=sy+(directInput_.crouch?1.05:1.65);
+    const double dx=-std::sin(directInput_.yaw)*std::cos(directInput_.pitch),dy=-std::sin(directInput_.pitch),dz=std::cos(directInput_.yaw)*std::cos(directInput_.pitch);
+    double closest=std::min(double(w.range),visibilityMeters_);std::size_t target=soldiers_.size();bool head=false;
+    for(std::size_t i=0;i<soldiers_.size();++i){const auto& t=soldiers_[i];if(t.health<=0||squads_[t.squad].side==Side::Player)continue;
+        const double ground=heightSampler_?heightSampler_(t.x,t.z):0;
+        for(int part=0;part<2;++part){const double tx=t.x-shooter.x,ty=ground+(part?1.65:1.0)-eye,tz=t.z-shooter.z;
+            const double along=tx*dx+ty*dy+tz*dz,radius=part?.22:.43;
+            const double distance2=tx*tx+ty*ty+tz*tz-along*along;
+            if(along>0&&distance2<radius*radius){const double hit=along-std::sqrt(std::max(0.,radius*radius-distance2));
+                if(hit<closest){closest=hit;target=i;head=part!=0;}}
+        }
+    }
+    if(heightSampler_)for(double t=.5;t<closest;t+=.5)if(eye+dy*t<heightSampler_(shooter.x+dx*t,shooter.z+dz*t)){closest=t;target=soldiers_.size();break;}
+    lastShot_={shooter.x,eye,shooter.z,shooter.x+dx*closest,eye+dy*closest,shooter.z+dz*closest,tick_,target<soldiers_.size()};
+    if(target<soldiers_.size()){auto& t=soldiers_[target];applyDamage(t,w.damage,head);if(t.health==0)++casualties_;}
     return true;
 }
 void Simulation::planAI() {
@@ -130,7 +196,15 @@ void Simulation::moveSoldiers() {
             auto& s=soldiers_[i];
             if (s.health<=0) continue;
             const auto& sq=squads_[s.squad];
-            const bool direct=(mode_==ViewMode::Direct && s.id==controlledSoldier() && commanderHasTarget_);
+            const bool controlled=mode_==ViewMode::Direct&&s.id==controlledSoldier();
+            if(controlled&&!commanderHasTarget_){
+                double dx=-std::sin(directInput_.yaw)*directInput_.forward+-std::cos(directInput_.yaw)*directInput_.right;
+                double dz=std::cos(directInput_.yaw)*directInput_.forward-std::sin(directInput_.yaw)*directInput_.right;
+                const double length=std::max(1.,std::sqrt(dx*dx+dz*dz));
+                const double speed=directInput_.crouch?1.5:directInput_.sprint&&!directInput_.aim?5.5:3.0;
+                s.x+=dx/length*speed*kFixedStep;s.z+=dz/length*speed*kFixedStep;s.facing=directInput_.yaw;continue;
+            }
+            const bool direct=controlled&&commanderHasTarget_;
             if (!direct && !sq.hasObjective) continue;
             const std::uint32_t position = s.id - sq.memberStart;
             const double x=direct ? commanderTargetX_ : sq.objectiveX + double(position%4)*2.0;
@@ -195,7 +269,8 @@ void Simulation::resolveCombat() {
         unsigned used=0;
         for(std::uint32_t k=0;k<attacking.memberCount && used<2;++k){
             const std::size_t shooter=attacking.memberStart+((k+std::uint32_t(tick_/10))%attacking.memberCount);
-            if(soldiers_[shooter].health<=0 || soldiers_[shooter].ammo==0)continue;
+            if(soldiers_[shooter].health<=0 || soldiers_[shooter].ammo==0 ||soldiers_[shooter].magazine==0||soldiers_[shooter].reloadTicks||
+               (mode_==ViewMode::Direct&&shooter==controlledSoldier()))continue;
             // Simple stable, distance-sensitive damage model, NOT realistic ballistics.
             int damage=best<80.0*80.0 ? 13 : 8;
             planned.push_back({shooter,target,damage});
@@ -205,10 +280,10 @@ void Simulation::resolveCombat() {
     for(const auto& hit:planned){
         auto& shooter=soldiers_[hit.shooter];
         auto& target=soldiers_[hit.target];
-        if(shooter.ammo==0)continue;
-        --shooter.ammo;++shots_;
+        if(shooter.ammo==0||shooter.magazine==0)continue;
+        --shooter.ammo;--shooter.magazine;++shots_;
         if(target.health>0){
-            target.health=static_cast<std::int16_t>(std::max(0,int(target.health)-hit.damage));
+            applyDamage(target,hit.damage);
             if(target.health==0)++casualties_;
         }
     }
@@ -218,8 +293,12 @@ void Simulation::setVisibilityMeters(double meters) {
 }
 void Simulation::step(std::uint32_t steps) {
     for(std::uint32_t i=0;i<steps;++i) {
+        for(auto& s:soldiers_){if(s.health>0&&s.ammo>0&&s.magazine==0&&!s.reloadTicks&&!(mode_==ViewMode::Direct&&s.id==controlledSoldier()))s.reloadTicks=weaponSpec(s.weapon).reloadTicks;
+            if(s.cooldown)--s.cooldown;
+            if(s.reloadTicks&&!--s.reloadTicks)s.magazine=std::min(weaponSpec(s.weapon).capacity,s.ammo);}
         planAI();
         moveSoldiers();
+        if(mode_==ViewMode::Direct&&directInput_.fire)fireControlled();
         ++tick_;
         resolveCombat();
     }
@@ -246,7 +325,7 @@ bool Simulation::save(const std::string& filename) const {
     std::ofstream out(filename,std::ios::binary);
     if(!out)return false;
     out.write("GZ89",4);
-    const std::uint32_t version=2;
+    const std::uint32_t version=3;
     const auto squadCount=static_cast<std::uint32_t>(squads_.size());
     const auto soldierCount=static_cast<std::uint32_t>(soldiers_.size());
     const std::uint8_t mode=static_cast<std::uint8_t>(mode_);
@@ -270,7 +349,10 @@ bool Simulation::save(const std::string& filename) const {
         writeOne(out,s.health);writeOne(out,s.ammo);
         const std::uint8_t commander=s.commander?1:0;
         writeOne(out,commander);
+        writeOne(out,s.armor);const auto weapon=std::uint8_t(s.weapon);writeOne(out,weapon);
+        writeOne(out,s.magazine);writeOne(out,s.cooldown);writeOne(out,s.reloadTicks);writeOne(out,s.facing);const auto primary=std::uint8_t(s.primaryWeapon);writeOne(out,primary);writeOne(out,s.secondaryAmmo);writeOne(out,s.secondaryMagazine);
     }
+    writeOne(out,controlledSoldier());
     return bool(out);
 }
 bool Simulation::load(const std::string& filename) {
@@ -282,7 +364,7 @@ bool Simulation::load(const std::string& filename) {
     std::uint64_t tick=0,shots=0,casualties=0;
     std::uint8_t mode=0,direct=0;
     double tx=0,tz=0;
-    if(!readOne(in,version) || (version!=1 && version!=2) || !readOne(in,tick) ||
+    if(!readOne(in,version) || (version!=1 && version!=2 && version!=3) || !readOne(in,tick) ||
        !readOne(in,shots) || !readOne(in,casualties) ||
        !readOne(in,squadCount) || !readOne(in,soldierCount) ||
        !readOne(in,mode) || !readOne(in,direct) ||
@@ -319,6 +401,13 @@ bool Simulation::load(const std::string& filename) {
            s.health<0 || s.health>100 || commander>1 ||
            !finiteCoordinate(s.x) || !finiteCoordinate(s.z))return false;
         s.commander=commander!=0;
+        if(version>=3){std::uint8_t weapon=0;
+            if(!readOne(in,s.armor)||!readOne(in,weapon)||!readOne(in,s.magazine)||!readOne(in,s.cooldown)||!readOne(in,s.reloadTicks)||!readOne(in,s.facing)||
+               s.armor<0||s.armor>100||weapon>=std::uint8_t(Weapon::Count)||!std::isfinite(s.facing))return false;
+            std::uint8_t primary=0;if(!readOne(in,primary)||!readOne(in,s.secondaryAmmo)||!readOne(in,s.secondaryMagazine)||primary>=std::uint8_t(Weapon::Pistol))return false;s.primaryWeapon=Weapon(primary);
+            s.weapon=Weapon(weapon);if(s.secondaryMagazine>weaponSpec(s.weapon==Weapon::Pistol?s.primaryWeapon:Weapon::Pistol).capacity)return false;
+            if(s.magazine>weaponSpec(s.weapon).capacity||s.cooldown>100||s.reloadTicks>100)return false;
+        }else{s.armor=0;s.magazine=std::min(s.ammo,weaponSpec(s.weapon).capacity);}
         soldiers.push_back(s);
     }
     // Reject inconsistent member-to-squad mappings and malformed counts.
@@ -334,6 +423,9 @@ bool Simulation::load(const std::string& filename) {
     // Windows UI without a player-controlled commander or with empty squads.
     if(squads[controlled].side!=Side::Player || !soldiers[squads[controlled].memberStart].commander)
         return false;
+    std::uint32_t individual=squads[controlled].memberStart;
+    if(version>=3&&(!readOne(in,individual)||individual>=soldiers.size()||soldiers[individual].squad!=controlled))return false;
+    controlledSoldierIndex_=individual;directInput_={};lastShot_={};
     squads_=std::move(squads);
     soldiers_=std::move(soldiers);
     tick_=tick;shots_=shots;casualties_=casualties;

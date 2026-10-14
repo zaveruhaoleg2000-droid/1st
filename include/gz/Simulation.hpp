@@ -3,6 +3,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <functional>
+#include <array>
+#include <algorithm>
 #include <vector>
 
 namespace gz {
@@ -14,12 +17,26 @@ constexpr std::uint32_t kMaxSquads = 320;
 enum class ViewMode : std::uint8_t { Command = 0, Direct = 1, GlobalAI = 2 };
 enum class Side : std::uint8_t { Player = 0, Opponent = 1 };
 struct Sector { int x=0, z=0; };
+enum class Weapon : std::uint8_t { Rifle, SMG, MachineGun, Sniper, Pistol, Count };
+struct WeaponSpec { const char* name; int damage; float range; std::uint16_t capacity,cooldown,reloadTicks; };
+inline constexpr std::array<WeaponSpec,5> kWeapons{{
+    {"AK-74",28,400,30,2,24}, {"SMG",18,180,32,1,18}, {"RPK",26,450,45,2,32},
+    {"SVD",65,700,10,8,30}, {"PISTOL",20,90,12,3,16}
+}};
+inline const WeaponSpec& weaponSpec(Weapon w){return kWeapons[std::min(std::size_t(w),kWeapons.size()-1)];}
+struct DirectInput {float forward=0,right=0,yaw=0,pitch=0;bool sprint=false,crouch=false,fire=false,aim=false;};
+struct ShotEvent {double x=0,y=0,z=0,endX=0,endY=0,endZ=0;std::uint64_t tick=0;bool hit=false;};
 struct Soldier {
     std::uint32_t id=0, squad=0;
     double x=0, z=0; // global meters: unaffected by sector transitions
     std::int16_t health=100;
     std::uint16_t ammo=120;
     bool commander=false;
+    std::int16_t armor=60;
+    Weapon weapon=Weapon::Rifle,primaryWeapon=Weapon::Rifle;
+    std::uint16_t secondaryAmmo=36,secondaryMagazine=12;
+    std::uint16_t magazine=30,cooldown=0,reloadTicks=0;
+    float facing=0;
 };
 struct Squad {
     std::uint32_t id=0;
@@ -47,6 +64,16 @@ public:
     bool orderSquad(std::uint32_t id, double x, double z);
     bool setHoldPosition(std::uint32_t id, bool hold);
     bool moveCommander(double x, double z);
+    bool selectControlledSoldier(std::uint32_t id);
+    bool cycleControlledSoldier();
+    void setDirectInput(DirectInput input);
+    bool reloadControlled();
+    bool toggleSidearm();
+    bool fireControlled();
+    void setHeightSampler(std::function<float(double,double)> sampler){heightSampler_=std::move(sampler);}
+    const DirectInput& directInput()const{return directInput_;}
+    const ShotEvent& lastShot()const{return lastShot_;}
+    static int applyDamage(Soldier& target,int damage,bool headshot=false);
     bool selectControlledSquad(std::uint32_t id);
     std::uint32_t controlledSquad() const { return controlledSquad_; }
     std::uint32_t controlledSoldier() const;
@@ -64,6 +91,10 @@ private:
     void planAI();
     void moveSoldiers();
     void resolveCombat();
+    DirectInput directInput_{};
+    ShotEvent lastShot_{};
+    std::uint32_t controlledSoldierIndex_=0;
+    std::function<float(double,double)> heightSampler_;
     WorkerPool workers_;
     std::vector<Soldier> soldiers_;
     std::vector<Squad> squads_;

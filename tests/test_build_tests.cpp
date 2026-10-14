@@ -18,11 +18,11 @@ int main(){
   std::vector<std::uint32_t> pixels;
   europe.render(960,540,pixels,0.f,true);
   const float balanced=europe.maximumLiftPixels();
-  check(balanced>2.f && balanced<35.f,"Default terrain must be mildly elevated");
+  check(balanced>10.f && balanced<35.f,"Satellite map relief must be visible and bounded");
   check(europe.triangles()>50000,"Mesh triangles not rendered");
   europe.setReliefScale(.027f);europe.render(960,540,pixels,0.f,true);
   const float old=europe.maximumLiftPixels();
-  check(old>balanced*4.0f,"Terrain flattening should be >75% versus earlier geometry");
+  check(old>balanced*1.3f,"Increasing relief must increase elevation");
   europe.setReliefScale(0.f);europe.render(960,540,pixels,0.f,true);
   check(europe.maximumLiftPixels()==0.f,"2D map relief setting must be perfectly flat");
   europe.setReliefScale(-5.f);

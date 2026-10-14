@@ -1,4 +1,5 @@
 #include "gz/Renderer.hpp"
+#include "gz/SceneMesh.hpp"
 #include "gz/LandscapeVisual.hpp"
 #include <algorithm>
 #include <array>
@@ -32,14 +33,14 @@ float Renderer::terrainHeight(float x,float z){
 
 void Renderer::resize(int w,int h){w_=std::clamp(w,320,1600);h_=std::clamp(h,240,1000);color_.assign(std::size_t(w_)*h_,0);depth_.resize(color_.size());}
 void Renderer::setupCamera(const Camera& c){
-  float d=std::clamp(c.distance,10.f,4000.f),p=std::clamp(c.pitch,.22f,1.4f);
-  Vec3 target{c.focusX,terrain_.heightAt(c.focusX,c.focusZ)+1.f,c.focusZ};
+  float d=std::clamp(c.distance,2.f,8000.f),p=std::clamp(c.pitch,c.firstPerson?-1.45f:.035f,c.firstPerson?1.45f:1.52f);
+  Vec3 target{c.focusX,terrain_.heightAt(c.focusX,c.focusZ)+(c.firstPerson?0.f:1.f),c.focusZ};
   eye_=target+Vec3{std::sin(c.yaw)*std::cos(p)*d,std::sin(p)*d,-std::cos(c.yaw)*std::cos(p)*d};
-  fwd_=norm(target-eye_);right_=norm(cross(fwd_,{0,1,0}));up_=norm(cross(right_,fwd_));
-  focal_=float(h_)*.94f; // ~56 degree vertical FOV
+  if(c.firstPerson){eye_=target+Vec3{0,c.eyeHeight,0};fwd_={-std::sin(c.yaw)*std::cos(p),-std::sin(p),std::cos(c.yaw)*std::cos(p)};}else fwd_=norm(target-eye_);right_=norm(cross(fwd_,{0,1,0}));up_=norm(cross(right_,fwd_));
+  focal_=float(h_)*.5f/std::tan(c.fov*.00872664626f); // ~56 degree vertical FOV
 }
 Renderer::Projected Renderer::projection(const Vec3& p)const{
-  Vec3 v=p-eye_;float z=dot(v,fwd_);if(z<.75f || z>10000.f)return {0,0,z,false};
+  Vec3 v=p-eye_;float z=dot(v,fwd_);if(z<.045f || z>10000.f)return {0,0,z,false};
   float factor=focal_/z;return {w_*.5f+dot(v,right_)*factor,h_*.5f-dot(v,up_)*factor,z,true};
 }
 bool Renderer::project(const Camera& c,float x,float y,float z,int& sx,int& sy)const{
@@ -896,12 +897,13 @@ void Renderer::drawUnits(const Simulation& sim,const Camera& camera,int selected
     // Draw actual individual soldiers in a radius around the player; distant soldiers are simulated but not rendered.
     for(std::size_t i=0;i<sim.soldierCount();++i){
       const auto& s=sim.soldier(i);
-      if(s.health<=0 || std::abs(s.x-camera.focusX)>170.f || std::abs(s.z-camera.focusZ)>170.f)continue;
+      if((camera.firstPerson&&i==sim.controlledSoldier())||s.health<=0 || std::abs(s.x-camera.focusX)>170.f || std::abs(s.z-camera.focusZ)>170.f)continue;
       float x=float(s.x),z=float(s.z),y=terrain_.heightAt(x,z);
       bool friendly=sim.squad(s.squad).side==Side::Player;
       std::uint32_t c=friendly?rgb(84,151,200):rgb(197,94,86);
       box({x,y+.92f,z},.75f,1.5f,.55f,c);
       box({x,y+1.86f,z},.5f,.55f,.5f,rgb(193,164,127));
+      box({x+.2f,y+1.1f,z+.3f},.07f,.11f,.75f,0x424a43,TextureMaterial::WeaponMetal);
       if(s.squad==std::uint32_t(selectedSquad) && s.commander)worldLine({x,y+2.5f,z},{x,y+5.5f,z},rgb(245,224,99),3);
     }
   }else{
@@ -987,7 +989,10 @@ void Renderer::draw(const Simulation& sim,const Camera& camera,int selectedSquad
   drawEmissiveEffects();
   drawPrecipitation();
   if(effects_.antialiasing)applyEdgeAA();
-  if(sim.mode()==ViewMode::Direct && !photoMode_){rect(w_/2-8,h_/2,17,1,rgb(231,221,193));rect(w_/2,h_/2-8,1,17,rgb(231,221,193));}
+  if(camera.firstPerson&&!photoMode_){SceneMesh gun;SceneMeshBuilder::addViewWeapon(gun,sim,camera,terrain_.heightAt(camera.focusX,camera.focusZ));
+    std::fill(depth_.begin(),depth_.end(),10000.f);
+    for(std::size_t i=0;i+2<gun.indices.size();i+=3){auto a=gun.vertices[gun.indices[i]],b=gun.vertices[gun.indices[i+1]],c=gun.vertices[gun.indices[i+2]];triangle({a.x,a.y,a.z},{b.x,b.y,b.z},{c.x,c.y,c.z},0x9a9c89,Surface::Solid,TextureMaterial(int(a.material)));}
+  }
 }
 bool Renderer::savePPM(const std::string& path)const{
   std::ofstream out(path,std::ios::binary);if(!out)return false;out<<"P6\n"<<w_<<" "<<h_<<"\n255\n";

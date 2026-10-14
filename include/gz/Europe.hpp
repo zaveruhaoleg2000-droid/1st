@@ -45,7 +45,7 @@ private:
     std::uint32_t mix(std::uint32_t x,std::uint32_t y,float a)const;
     void glyphText(int x,int y,std::u32string_view text,float scale,std::uint32_t color);
     std::optional<MapSelection> selected_;
-    std::vector<std::uint8_t> political_,glyphs_;
+    std::vector<std::uint8_t> political_,glyphs_,advances_;
     std::string news_;int funds_=0;
     int fontW_=0,fontH_=0;
     std::vector<Vertex> vertices_;
@@ -55,6 +55,6 @@ private:
     float west_=-20,east_=60,north_=76,south_=27;
     std::uint64_t drawnTriangles_=0;
     float viewZoom_=1.f,panX_=0.f,panY_=0.f;
-    float reliefScale_=0.006f,maxLiftPixels_=0.f;
+    float reliefScale_=0.018f,maxLiftPixels_=0.f;
 };
 }

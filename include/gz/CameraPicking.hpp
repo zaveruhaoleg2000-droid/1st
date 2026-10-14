@@ -9,19 +9,20 @@ inline bool projectGpuPoint(const GpuFrameConstants& frame,int width,int height,
     const auto& m=frame.viewProjection;
     const float w=m[3]*x+m[7]*y+m[11]*z+m[15];
     const float depth=m[2]*x+m[6]*y+m[10]*z+m[14];
-    if(width<=0||height<=0||w<=.75f||depth<0.f||depth>w)return false;
+    if(width<=0||height<=0||w<=.04f||depth<0.f||depth>w)return false;
     px=((m[0]*x+m[4]*y+m[8]*z+m[12])/w*.5f+.5f)*width;
     py=((m[1]*x+m[5]*y+m[9]*z+m[13])/w*.5f+.5f)*height;
     return std::isfinite(px)&&std::isfinite(py);
 }
 inline PickingRay gpuPickingRay(const GpuSceneCamera& c,int width,int height,float px,float py){
     const auto frame=makeGpuFrameConstants(c,std::uint32_t(std::max(width,1)),std::uint32_t(std::max(height,1)),0);
-    const float pitch=std::clamp(c.pitch,.22f,1.4f);
+    const float pitch=std::clamp(c.pitch,c.firstPerson?-1.45f:.035f,c.firstPerson?1.45f:1.52f);
     const float fx=-std::sin(c.yaw)*std::cos(pitch),fy=-std::sin(pitch),fz=std::cos(c.yaw)*std::cos(pitch);
     const float horizontal=std::sqrt(fx*fx+fz*fz),rx=-fz/horizontal,rz=fx/horizontal;
     const float ux=-rz*fy,uy=rz*fx-rx*fz,uz=rx*fy;
-    const float nx=(2.f*px/std::max(width,1)-1.f)/(1.88f*float(std::max(height,1))/std::max(width,1));
-    const float ny=(2.f*py/std::max(height,1)-1.f)/1.88f;
+    const float focal=1.f/std::tan(std::clamp(c.fov,35.f,100.f)*.00872664626f);
+    const float nx=(2.f*px/std::max(width,1)-1.f)/(focal*float(std::max(height,1))/std::max(width,1));
+    const float ny=(2.f*py/std::max(height,1)-1.f)/focal;
     const float dx=fx+rx*nx-ux*ny,dy=fy-uy*ny,dz=fz+rz*nx-uz*ny;
     const float length=std::sqrt(dx*dx+dy*dy+dz*dz);
     return {{frame.eye[0],frame.eye[1],frame.eye[2]},{dx/length,dy/length,dz/length}};

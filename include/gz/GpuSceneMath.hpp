@@ -15,6 +15,8 @@ struct GpuSceneCamera {
     float fogR=.58f,fogG=.67f,fogB=.69f;
     float skyR=.44f,skyG=.59f,skyB=.69f;
     float wind=.35f,wetness=0.f,snowCover=0.f,cloudCover=.18f;
+    bool firstPerson=false;
+    float eyeHeight=1.65f,fov=56.f;
     bool waterReflections=true;
     bool enabled=false;
 };
@@ -34,16 +36,16 @@ struct GpuFrameConstants {
 static_assert(sizeof(GpuFrameConstants)==272);
 inline GpuFrameConstants makeGpuFrameConstants(const GpuSceneCamera& c,
     std::uint32_t width,std::uint32_t height,float seconds){
-    const float d=std::clamp(c.distance,10.f,4000.f),p=std::clamp(c.pitch,.22f,1.4f);
+    const float d=std::clamp(c.distance,2.f,8000.f),p=std::clamp(c.pitch,c.firstPerson?-1.45f:.035f,c.firstPerson?1.45f:1.52f);
     const float sx=std::sin(c.yaw)*std::cos(p),sy=std::sin(p),sz=-std::cos(c.yaw)*std::cos(p);
-    const float ex=c.focusX+sx*d,ey=c.focusY+sy*d,ez=c.focusZ+sz*d;
+    const float ex=c.firstPerson?c.focusX:c.focusX+sx*d,ey=c.firstPerson?c.focusY+c.eyeHeight:c.focusY+sy*d,ez=c.firstPerson?c.focusZ:c.focusZ+sz*d;
     // fwd points from eye to target, right = cross(fwd, world up).
     const float fx=-sx,fy=-sy,fz=-sz;
     const float rx=-fz/std::max(.001f,std::sqrt(fx*fx+fz*fz));
     const float rz=fx/std::max(.001f,std::sqrt(fx*fx+fz*fz));
     const float ux=-rz*fy,uy=rz*fx-rx*fz,uz=rx*fy;
-    const float scaleY=1.88f,scaleX=scaleY*float(height)/float(std::max(1u,width));
-    const float nearZ=.75f,farZ=10000.f;
+    const float scaleY=1.f/std::tan(std::clamp(c.fov,35.f,100.f)*.00872664626f),scaleX=scaleY*float(height)/float(std::max(1u,width));
+    const float nearZ=c.firstPerson?.045f:.15f,farZ=10000.f;
     const float A=farZ/(farZ-nearZ),B=nearZ*farZ/(farZ-nearZ);
     const float rows[4][4]={
         {rx*scaleX,0.f,rz*scaleX,-(rx*ex+rz*ez)*scaleX},

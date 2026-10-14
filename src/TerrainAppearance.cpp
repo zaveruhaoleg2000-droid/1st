@@ -22,7 +22,7 @@ std::shared_ptr<TerrainMacroData> TerrainAppearance::generate(WorldSettings sett
         const float field=landscapeNoise(wx+seedOffset,wz-seedOffset,170.f);
         const float large=landscapeNoise(wx-seedOffset,wz+seedOffset,670.f);
         const float grass=settings.region==TerrainRegion::Forest?.80f:settings.region==TerrainRegion::Wetland?.87f:1.f;
-        std::array<float,3> color{(63.f+field*29.f+large*9.f)*grass,91.f+field*46.f+large*12.f,40.f+field*20.f};
+        std::array<float,3> color{(80.f+field*30.f+large*8.f)*grass,84.f+field*27.f+large*6.f,52.f+field*20.f};
         auto blend=[&](std::array<float,3> target,float amount){for(int c=0;c<3;++c)color[c]=color[c]*(1-amount)+target[c]*amount;};
         blend({117,94,59},surface.soil*.75f);
         blend({99,101,96},surface.rock);

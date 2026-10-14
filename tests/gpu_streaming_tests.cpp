@@ -43,7 +43,8 @@ int main(){
     GZ_CHECK(resized.vertices.bytes==view.vertexBytes && resized.indices.bytes==0);
     resized=tracker.plan(view,false,true);
     GZ_CHECK(resized.vertices.bytes==0 && resized.indices.bytes==view.indexCount*4);
-    camera.focusX+=25;builder.build(mesh,terrain,sim,camera,1);view=gz::makeGeometryView(mesh);
+    camera.focusX+=25;builder.build(mesh,terrain,sim,camera,1);GZ_CHECK(mesh.staticRevision==staticRevision);
+    camera.focusX+=128;builder.build(mesh,terrain,sim,camera,1);view=gz::makeGeometryView(mesh);
     GZ_CHECK(view.staticRevision>staticRevision && tracker.plan(view).vertices.offset==0);
     tracker.commit(view);
     auto revision=view.staticRevision;

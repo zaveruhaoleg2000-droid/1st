@@ -55,10 +55,10 @@ def main():
     }.items():
         (dest / filename).write_bytes(('@echo off\r\ncd /d "%~dp0"\r\n' + command + '\r\n').encode('ascii'))
     shutil.copy2(ROOT / 'README_UA.md', dest / 'README_GAME_UA.md')
-    for document in ('GPU_OPTIMIZATION_UA.md', 'GRAPHICS_RTX3050TI_UA.md', 'UI_TERRAIN_v024_UA.md'):
+    for document in ('GPU_OPTIMIZATION_UA.md', 'GRAPHICS_RTX3050TI_UA.md', 'UI_TERRAIN_v024_UA.md', 'GAMEPLAY_v025_UA.md'):
         if (ROOT / 'docs' / document).is_file():
             shutil.copy2(ROOT / 'docs' / document, dest / document)
-    (dest / 'README_UA.txt').write_text('''GRAY ZONE: 1989 — v0.0.24, Windows x64
+    (dest / 'README_UA.txt').write_text('''GRAY ZONE: 1989 — v0.0.25, Windows x64
 
 Повністю розпакуйте архів. Запуск: PLAY.bat або PLAY_HIGH.bat.
 Для RTX 3050 Ti 4 ГБ почніть із високої якості. Якщо гра працює повільно,
@@ -74,13 +74,20 @@ def main():
 Висока якість: 512px матеріали з mip-рівнями, тіні 2048px, MSAA до 4x.
 Середня: тіні 1024px, MSAA до 4x. Низька: тіні 512px, без MSAA.
 F2 — час доби; F3 — погода; F4 — тіні; F7 — вітер; F8 — відбиття води.
-Клавіша 2 — наближений тактичний режим. Інше керування: README_GAME_UA.md.
+Клавіша 2 — режим від першої особи. Інше керування: README_GAME_UA.md.
 
 VERIFY_GPU.bat перевіряє native Vulkan без дозволу на CPU fallback
 і записує gpu_smoke_test.log; graphics_backend.log містить стан рендерера.
 GPU_PROBE.bat перевіряє тільки loader/драйвер.
 
-Новий HUD, seed-рельєф і макротекстури: UI_TERRAIN_v024_UA.md.
+v0.0.25: реальний час з паузою; новий HUD та пропорційний шрифт.
+1 тактика, 2 перша особа, 3 мапа. Space пауза.
+FPS: WASD рух, Shift біг, Ctrl присісти, ЛКМ вогонь, ПКМ приціл,
+R перезарядка, F пістолет/основна зброя, Tab наступний боєць, Esc тактика.
+Камера: середня кнопка + рух миші — обертання/нахил; колесо масштаб.
+31 процедурний матеріал із normal maps. Macro 2048/1024/512 за якістю.
+Нові можливості й обмеження: GAMEPLAY_v025_UA.md.
+Seed-рельєф попереднього етапу: UI_TERRAIN_v024_UA.md.
 Попередня графічна база: GRAPHICS_RTX3050TI_UA.md.
 У цьому середовищі немає фізичної RTX 3050 Ti чи Windows 11;
 частота кадрів на вашому ПК ще не виміряна.
@@ -94,7 +101,7 @@ GPU_PROBE.bat перевіряє тільки loader/драйвер.
     evidence.mkdir()
     if args.evidence_dir:
         for source in args.evidence_dir.glob('*.log'):
-            if not source.name.startswith(('graphics-', 'v024-')):
+            if not source.name.startswith(('graphics-', 'v024-', 'v025-')):
                 continue
             if 'tests' in source.name or 'gallery' in source.name or 'smoke' in source.name:
                 shutil.copy2(source, evidence / source.name)

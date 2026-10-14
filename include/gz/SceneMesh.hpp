@@ -5,7 +5,7 @@
 namespace gz {
 // Extra native model surfaces; the original texture IDs remain unchanged.
 enum class NativeMaterial : std::uint8_t {
-    PlayerUniform=17,OpponentUniform,Skin,Armor,Rubber,Glass,Roof,Count
+    PlayerUniform=17,OpponentUniform,Skin,Armor,Rubber,Glass,Roof,WeaponMetal,WeaponWood,Fabric,Stone,RoofSlate,LeavesDry,Fence,Crate,MuzzleFlash,Count
 };
 // Data layout matches the D3D11 input layout (12 float32 components).
 struct SceneVertex {
@@ -30,6 +30,9 @@ public:
     SceneMeshBuilder(const SceneMeshBuilder&)=delete;
     SceneMeshBuilder& operator=(const SceneMeshBuilder&)=delete;
     void build(SceneMesh& mesh,TerrainWorld& terrain,const Simulation& sim,const Camera& camera,int selectedSquad,AtmosphereSettings atmosphere={});
+    static void addWeapon(SceneMesh& mesh,Weapon weapon,bool detailed=true);
+    static void addEnvironmentProp(SceneMesh& mesh,int kind,std::uint32_t seed=1989,bool detailed=true);
+    static void addViewWeapon(SceneMesh& mesh,const Simulation& sim,const Camera& camera,float ground);
     static void addTree(SceneMesh& mesh,float x,float y,float z,float scale=1.f,std::uint32_t seed=0,bool detailed=false);
     void invalidate(){cacheValid_=false;}
     std::uint64_t staticBuildCount()const{return staticRevision_;}

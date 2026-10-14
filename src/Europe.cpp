@@ -61,6 +61,7 @@ bool EuropeBackdrop::loadPolitics(const std::string& path,const std::string& gly
     font.read(reinterpret_cast<char*>(glyphs_.data()),std::streamsize(glyphs_.size()));
     if(!font)glyphs_.clear();
   }
+  std::ifstream advances("assets/ui/advances.bin",std::ios::binary);advances_.assign(std::istreambuf_iterator<char>(advances),{});
   return true;
 }
 std::uint8_t EuropeBackdrop::politicalAt(float lon,float lat)const{
@@ -126,7 +127,7 @@ void EuropeBackdrop::glyphText(int x,int y,std::u32string_view text,float scale,
         auto& pix=(*pixels_)[std::size_t(py)*w_+px];pix=mix(pix,c,ink/255.f);
       }
     }
-    cursor+=std::max(3,int(kGlyphCellW*scale*.63f));
+    cursor+=std::max(3,int((idx<advances_.size()?advances_[idx]:24)*scale));
   }
 }
 
@@ -157,16 +158,17 @@ void EuropeBackdrop::triangle(const Projected& a,const Projected& b,const Projec
   // Directional sunlight on actual displaced triangular face (visual relief is deliberately exaggerated).
   float dsx=(b.height-a.height),dsy=(c.height-a.height);
   float relative=reliefScale_/.027f;
-  float light=std::clamp(.91f-.00048f*dsx*relative+.00064f*dsy*relative,.66f,1.18f);
+  float light=std::clamp(.98f-.00018f*dsx*relative+.00022f*dsy*relative,.80f,1.08f);
   auto color=mix(mix(a.color,b.color,.5f),c.color,.33333f);
-  color=shade(color,light);
+  color=shade(color,light);(void)color;
   for(int y=y0;y<=y1;++y){float py=y+.5f;
     for(int x=x0;x<=x1;++x){float px=x+.5f;
       float wb=((px-a.x)*(c.y-a.y)-(py-a.y)*(c.x-a.x))*inv;
       float wc=((b.x-a.x)*(py-a.y)-(b.y-a.y)*(px-a.x))*inv;
       float wa=1-wb-wc;
       if(wa<-.001f||wb<-.001f||wc<-.001f)continue;
-      (*pixels_)[std::size_t(y)*w_+x]=color;
+      unsigned channels[3]{};for(int k=0;k<3;++k){int shift=(2-k)*8;channels[k]=unsigned(std::clamp((((a.color>>shift)&255)*wa+((b.color>>shift)&255)*wb+((c.color>>shift)&255)*wc)*light,0.f,255.f));}
+      (*pixels_)[std::size_t(y)*w_+x]=(channels[0]<<16)|(channels[1]<<8)|channels[2];
     }
   }
   ++drawnTriangles_;
@@ -178,7 +180,7 @@ void EuropeBackdrop::render(int width,int height,std::vector<std::uint32_t>& out
     std::fill_n(output.begin()+std::size_t(y)*w_,w_,c);
   }
   if(vertices_.empty())return;
-  const float drift=std::sin(seconds*.10f)*float(w_)*.006f;
+  const float drift=strategic?0.f:std::sin(seconds*.10f)*float(w_)*.006f;
   for(int y=0;y<sourceH_;++y){float v=float(y)/(sourceH_-1);
     for(int x=0;x<sourceW_;++x){float u=float(x)/(sourceW_-1);
       const auto& s=vertices_[std::size_t(y)*sourceW_+x];auto& p=projected_[std::size_t(y)*sourceW_+x];
@@ -190,11 +192,20 @@ void EuropeBackdrop::render(int width,int height,std::vector<std::uint32_t>& out
       p.x=w_*.64f+(p.x-w_*.64f)*viewZoom_+panX_*w_;
       p.y=h_*.50f+(p.y-h_*.50f)*viewZoom_+panY_*h_;
       p.color=rgb(s.r,s.g,s.b);
+      if(s.land){
+        const auto sample=[&](int xx,int yy){return float(vertices_[std::size_t(std::clamp(yy,0,sourceH_-1))*sourceW_+std::clamp(xx,0,sourceW_-1)].altitude);};
+        const float dx=sample(x+1,y)-sample(x-1,y),dy=sample(x,y+1)-sample(x,y-1);
+        const float reliefLight=std::clamp(1.f-dx*.00022f+dy*.00028f,.58f,1.24f);
+        const float forest=std::clamp((s.g-s.r)*.012f,0.f,1.f);
+        p.color=mix(p.color,rgb(71,89,62),forest*.35f);
+        p.color=shade(p.color,reliefLight);
+        if(s.altitude>1800)p.color=mix(p.color,rgb(206,210,197),std::clamp((s.altitude-1800)/2200.f,0.f,.72f));
+      }else p.color=mix(rgb(22,48,66),rgb(47,85,100),std::clamp(float(s.b)/255.f,0.f,1.f));
       if(political && politicsLoaded() && s.land){
         const std::uint8_t faction=political_[std::size_t(y)*sourceW_+x];
-        if(faction)p.color=mix(p.color,kPolitics[faction],strategic?.66f:.24f);
+        if(faction)p.color=mix(p.color,kPolitics[faction],strategic?.16f:.08f);
       }
-      if(s.land && u>.55f) p.color=mix(p.color,rgb(121,49,51),.12f*(u-.55f)/.45f); // geopolitical color grading, not borders
+      if(s.land && u>.55f) p.color=mix(p.color,rgb(121,49,51),.025f*(u-.55f)/.45f); // geopolitical color grading, not borders
     }
   }
   std::uint32_t dummy=0;

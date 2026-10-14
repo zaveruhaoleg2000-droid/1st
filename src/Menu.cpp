@@ -148,7 +148,7 @@ void MenuScene::draw(const MenuState& menu,int w,int h,float seconds){
   else if(menu.page==MenuPage::Settings)text(int(w_*.036f),int(h_*.80f),U"Ефекти працюють у 3D-режимі",.46f*s,muted);
   else text(int(w_*.036f),int(h_*.80f),U"ПОЛЬЩА  •  ЧВК  •  СХІДНИЙ ФРОНТ",.49f*s,muted);
   rect(int(w_*.034f),int(h_*.866f),int(w_*.316f),1,gold,.38f);
-  text(int(w_*.036f),int(h_*.905f),U"GRAY ZONE  /  v0.0.24",.42f*s,muted);
+  text(int(w_*.036f),int(h_*.905f),U"GRAY ZONE  /  v0.0.25",.42f*s,muted);
   if(menu.page==MenuPage::Scenario){
     const int index=std::clamp(menu.selected,0,2);
     static const std::u32string titles[]={U"ВАРШАВА / 18.03.1989",U"ПРИП'ЯТЬ / 20.03.1989",U"БУДАПЕШТ / 22.03.1989"};

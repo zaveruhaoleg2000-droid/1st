@@ -46,7 +46,7 @@ int main(){
     float visualTime=7;
     gz::TacticalHud hud;GZ_CHECK(hud.loadFont("assets/ui/glyphs.pgm"));bool showHud=false;
     std::shared_ptr<gz::TerrainMacroData> reviewMacro;
-    if(review)reviewMacro=gz::TerrainAppearance::generate(terrain.generatorSettings(),-1024,-2048,4096);
+    if(review)reviewMacro=gz::TerrainAppearance::generate(terrain.generatorSettings(),-1024,-2048,2048);
     gz::TerrainMacroView macroView=reviewMacro?reviewMacro->view():gz::TerrainMacroView{};
     std::vector<std::uint32_t> sentinel(width*height,0xffff00ffu);
     auto submit=[&](){
@@ -56,7 +56,7 @@ int main(){
         frame.worldMesh=gz::makeGeometryView(mesh);
         frame.camera=gz::makeGpuSceneCamera(camera,terrain.heightAt(camera.focusX,camera.focusZ),atmosphere);
         frame.visualTimeSeconds=visualTime;frame.terrainMacro=macroView;
-        if(showHud){hud.build(sim,terrain,camera,review?&reviewCampaign.state():nullptr,0,width,height,false,true);frame.interfaceMesh=hud.geometry();}
+        if(showHud){hud.build(sim,terrain,camera,review?&reviewCampaign.state():nullptr,0,width,height,false,2);frame.interfaceMesh=hud.geometry();}
         GZ_CHECK(host.submit(frame));GZ_CHECK(host.activeAPI()==gz::GraphicsAPI::Vulkan);
     };
     submit();const auto first=host.telemetry().meshUploadedBytes;
@@ -72,14 +72,14 @@ int main(){
     const auto moved=capture(display,window,width,height,"test_build_vulkan_units.ppm");GZ_CHECK(moved!=original);
     auto before=host.telemetry().meshUploadedBytes;
     camera.yaw+=.3f;submit();GZ_CHECK(host.telemetry().meshUploadedBytes==before);
-    camera.focusX+=25;submit();GZ_CHECK(host.telemetry().meshUploadedBytes>before+first/2);
+    camera.focusX+=128;submit();GZ_CHECK(host.telemetry().meshUploadedBytes>before+first/2);
     before=host.telemetry().meshUploadedBytes;
     GZ_CHECK(host.resize(width,height) && host.nativeSceneReady());submit();
     GZ_CHECK(host.telemetry().meshUploadedBytes>before+first/2);
     GZ_CHECK(host.telemetry().nativeSceneFrames==13);
     GZ_CHECK(host.telemetry().meshResidentBytes<=128u*1024u*1024u);
     GZ_CHECK(host.telemetry().validationErrors==0);
-    GZ_CHECK(host.telemetry().materialTextureCount==16);
+    GZ_CHECK(host.telemetry().materialTextureCount==std::size_t(gz::TextureMaterial::Count)-1);
     GZ_CHECK(host.telemetry().graphicsResidentBytes<(review?512u:256u)*1024u*1024u);
     std::cout<<"Native Vulkan: 13 frames, first upload="<<first<<" bytes, unit update="<<delta
         <<" bytes, skipped="<<host.telemetry().skippedMeshUploads
@@ -125,7 +125,10 @@ int main(){
         capture(display,window,width,height,"test_build_review_vehicle.ppm");
         camera.focusX=3370;camera.focusZ=1330;camera.distance=95;camera.pitch=.42f;atmosphere.time=gz::TimeOfDay::Sunset;submit();
         capture(display,window,width,height,"test_build_review_terrain.ppm");
-        std::cout<<"Review captures: native Vulkan + Ukrainian HUD + 4096 terrain macro; software driver, 1280x720.\n";
+        camera.firstPerson=true;camera.focusX=float(sim.soldier(sim.controlledSoldier()).x);camera.focusZ=float(sim.soldier(sim.controlledSoldier()).z);camera.distance=1;camera.pitch=0;camera.yaw=-1.5708f;camera.fov=78;atmosphere={};sim.setMode(gz::ViewMode::Direct);submit();
+        capture(display,window,width,height,"test_build_review_first_person.ppm");
+        GZ_CHECK(host.telemetry().validationErrors==0);
+        std::cout<<"Review captures: native Vulkan + Ukrainian HUD + 2048 terrain macro; software driver, 1280x720.\n";
     }
     host.shutdown();XDestroyWindow(display,window);XCloseDisplay(display);
 }

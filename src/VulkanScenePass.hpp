@@ -46,8 +46,10 @@ class VulkanScenePass {
     VkDescriptorSetLayout descriptorLayout_=VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool_=VK_NULL_HANDLE;
     VkDescriptorSet descriptor_=VK_NULL_HANDLE;
-    VkSampler materialSampler_=VK_NULL_HANDLE,shadowSampler_=VK_NULL_HANDLE;
-    ImageResource materials_,shadow_,msaaColor_;
+    VkSampler materialSampler_=VK_NULL_HANDLE,shadowSampler_=VK_NULL_HANDLE,glyphSampler_=VK_NULL_HANDLE;
+    ImageResource materials_,normals_,shadow_,msaaColor_;
+    HostBuffer normalStaging_;
+    std::vector<VkBufferImageCopy> normalCopies_;
     ImageResource glyphs_;
     ImageResource macro_;
     HostBuffer macroStaging_;
@@ -112,7 +114,7 @@ public:
     void record(VkCommandBuffer command,std::uint32_t swapImage,const GpuFrameConstants& constants);
     std::uint32_t triangleCount()const noexcept{return indices_/3;}
     std::uint64_t residentBytes()const noexcept{return vertex_.allocationBytes+index_.allocationBytes+vertexDevice_.allocationBytes+indexDevice_.allocationBytes;}
-    std::uint64_t graphicsResidentBytes()const noexcept{return residentBytes()+materials_.allocationBytes+shadow_.allocationBytes+msaaColor_.allocationBytes+depthAllocationBytes_+uniforms_.allocationBytes+textureStaging_.allocationBytes+glyphs_.allocationBytes+glyphStaging_.allocationBytes+uiVertices_.allocationBytes+uiIndices_.allocationBytes+macro_.allocationBytes+macroStaging_.allocationBytes;}
+    std::uint64_t graphicsResidentBytes()const noexcept{return residentBytes()+materials_.allocationBytes+normals_.allocationBytes+normalStaging_.allocationBytes+shadow_.allocationBytes+msaaColor_.allocationBytes+depthAllocationBytes_+uniforms_.allocationBytes+textureStaging_.allocationBytes+glyphs_.allocationBytes+glyphStaging_.allocationBytes+uiVertices_.allocationBytes+uiIndices_.allocationBytes+macro_.allocationBytes+macroStaging_.allocationBytes;}
     std::uint64_t interfaceBytes()const noexcept{return uiBytes_;}
     std::uint64_t macroBytes()const noexcept{return macroBytes_;}
     std::uint32_t macroResolution()const noexcept{return macroResolution_;}
